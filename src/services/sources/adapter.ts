@@ -74,7 +74,7 @@ export interface SourceAdapter {
    * Called when the user adds or edits a source.
    * Should throw a `ValidationError` with a user-readable message on failure.
    */
-  validate(identifier: string, config: Record<string, unknown>): Promise<void>;
+  validate(identifier: string, config?: Record<string, unknown>): Promise<void>;
 
   /**
    * Fetches one page of papers.

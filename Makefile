@@ -26,6 +26,9 @@ db-generate:
 db-migrate:
 	npx prisma migrate dev
 
+db-seed:
+	npx prisma db seed
+
 spike:
 	npx tsx scripts/spike-linkedin.ts
 
