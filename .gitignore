@@ -1,0 +1,25 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+
+.env
+.env.local
+.env.*.local
+!.env.example
+
+*.log
+npm-debug.log*
+.DS_Store
+.idea/
+.vscode/
+
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Local infra volumes
+.docker-data/
+minio-data/
+postgres-data/

@@ -1,0 +1,105 @@
+# Local development infrastructure.
+#
+#   docker compose up -d
+#   npm run db:migrate
+#   npm run dev          # in one terminal
+#   npm run worker       # in another
+#
+# Nothing here is production configuration. Credentials are the well-known
+# defaults on purpose: these ports are bound to 127.0.0.1 only, and the real
+# values live in your secret manager.
+
+name: research-to-linkedin
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: r2l-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: research_linkedin
+      # Faster, deterministic collation for the trigram similarity pass.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    ports:
+      # 127.0.0.1 prefix: never expose a dev database on the LAN.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d research_linkedin']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # pg_trgm ships in the official image's contrib set; the extension itself is
+    # created by Prisma via `postgresqlExtensions` (see prisma/schema.prisma).
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - max_connections=200
+
+  redis:
+    image: redis:7-alpine
+    container_name: r2l-redis
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # appendonly keeps BullMQ's delayed/scheduled jobs across a restart.
+    # A lost `post.publish` job is a post that silently never happens.
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --maxmemory-policy
+      - noeviction
+
+  minio:
+    image: minio/minio:latest
+    container_name: r2l-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - '127.0.0.1:9000:9000' # S3 API  -> S3_ENDPOINT
+      - '127.0.0.1:9001:9001' # Console -> http://localhost:9001
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    command: server /data --console-address ":9001"
+
+  # One-shot: creates the bucket the app expects, then exits.
+  minio-init:
+    image: minio/mc:latest
+    container_name: r2l-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/research-linkedin &&
+      echo 'bucket research-linkedin ready'
+      "
+    restart: 'no'
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

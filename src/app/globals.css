@@ -1,0 +1,74 @@
+@import 'tailwindcss';
+
+/**
+ * Design tokens.
+ *
+ * Tailwind v4 takes its theme from CSS, not a JS config file — every custom
+ * property declared in `@theme` becomes a utility class (`--color-ink-900`
+ * gives you `text-ink-900`, `bg-ink-900`, `border-ink-900`).
+ *
+ * Kept deliberately small. The visual engine (docs/06) has its own palette
+ * because rendered PNGs must be deterministic and cannot read the DOM.
+ */
+@theme {
+  --color-ink-50: oklch(0.98 0.003 260);
+  --color-ink-100: oklch(0.95 0.005 260);
+  --color-ink-200: oklch(0.9 0.008 260);
+  --color-ink-400: oklch(0.68 0.015 260);
+  --color-ink-600: oklch(0.5 0.02 260);
+  --color-ink-800: oklch(0.3 0.02 260);
+  --color-ink-900: oklch(0.21 0.02 260);
+  --color-ink-950: oklch(0.15 0.02 260);
+
+  --color-accent-400: oklch(0.72 0.13 245);
+  --color-accent-500: oklch(0.62 0.15 245);
+  --color-accent-600: oklch(0.54 0.16 245);
+
+  --color-signal-ok: oklch(0.68 0.15 150);
+  --color-signal-warn: oklch(0.76 0.15 80);
+  --color-signal-danger: oklch(0.62 0.2 25);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+:root {
+  --surface: var(--color-ink-50);
+  --surface-raised: white;
+  --text-primary: var(--color-ink-900);
+  --text-secondary: var(--color-ink-600);
+  --border-subtle: var(--color-ink-200);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: var(--color-ink-950);
+    --surface-raised: var(--color-ink-900);
+    --text-primary: var(--color-ink-100);
+    --text-secondary: var(--color-ink-400);
+    --border-subtle: var(--color-ink-800);
+    color-scheme: dark;
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--surface);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Never remove the focus ring — our users include screen-reader and
+   keyboard-only academics, and this app is a professional publishing tool. */
+:focus-visible {
+  outline: 2px solid var(--color-accent-500);
+  outline-offset: 2px;
+}
