@@ -6,8 +6,7 @@ import { sourcesPollQueue } from '@/worker/queues';
 import type { SourceKind } from '@prisma/client';
 
 // Ensure adapters are registered
-import '@/services/sources/adapters/openalex';
-import '@/services/sources/adapters/orcid';
+import '@/services/sources/adapters';
 
 export async function GET(): Promise<NextResponse> {
   const session = await auth();
@@ -41,8 +40,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'kind and identifier are required' }, { status: 400 });
   }
 
-  const adapter = getAdapter(kind);
-  if (!adapter) {
+  // getAdapter throws for an unregistered kind, so an unsupported value has to
+  // be caught here to stay a 400 rather than surfacing as a 500.
+  let adapter;
+  try {
+    adapter = getAdapter(kind);
+  } catch {
     return NextResponse.json({ error: `Unsupported source kind: ${kind}` }, { status: 400 });
   }
 
