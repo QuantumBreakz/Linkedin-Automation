@@ -103,11 +103,13 @@ async function findFuzzyMatchWithDoi(
   const year = publicationYear(paper.publicationDate ?? null);
 
   // Find any paper for this user with a fuzzy key and a similar title
-  const candidates = await db.$queryRaw<Array<{ id: string; canonical_key: string; publication_date: Date | null }>>`
-    SELECT id, canonical_key, publication_date
+  // Prisma maps these columns without @map, so they are camelCase and must be
+  // quoted — unquoted identifiers are folded to lower case by Postgres.
+  const candidates = await db.$queryRaw<Array<{ id: string; canonicalKey: string; publicationDate: Date | null }>>`
+    SELECT id, "canonicalKey", "publicationDate"
     FROM "ResearchPaper"
-    WHERE user_id = ${userId}
-      AND canonical_key LIKE 'fuzzy:%'
+    WHERE "userId" = ${userId}
+      AND "canonicalKey" LIKE 'fuzzy:%'
       AND doi IS NULL
       AND similarity(normalise_title_for_match(title), ${normalised}) >= ${TITLE_SIMILARITY_THRESHOLD}
     LIMIT 5
@@ -115,11 +117,11 @@ async function findFuzzyMatchWithDoi(
 
   for (const c of candidates) {
     // Year-compatible guard (avoids merging two papers by the same authors in different years)
-    const candidateYear = publicationYear(c.publication_date);
+    const candidateYear = publicationYear(c.publicationDate);
     if (year && candidateYear && Math.abs(Number(year) - Number(candidateYear)) > PUBLICATION_YEAR_TOLERANCE) {
       continue;
     }
-    return { id: c.id, canonicalKey: c.canonical_key };
+    return { id: c.id, canonicalKey: c.canonicalKey };
   }
   return null;
 }
@@ -132,21 +134,21 @@ async function findByTitleSimilarity(
   const normalised = normaliseTitleForMatch(paper.title);
   const year = publicationYear(paper.publicationDate ?? null);
 
-  const candidates = await db.$queryRaw<Array<{ id: string; canonical_key: string; publication_date: Date | null }>>`
-    SELECT id, canonical_key, publication_date
+  const candidates = await db.$queryRaw<Array<{ id: string; canonicalKey: string; publicationDate: Date | null }>>`
+    SELECT id, "canonicalKey", "publicationDate"
     FROM "ResearchPaper"
-    WHERE user_id = ${userId}
+    WHERE "userId" = ${userId}
       AND similarity(normalise_title_for_match(title), ${normalised}) >= ${TITLE_SIMILARITY_THRESHOLD}
     ORDER BY similarity(normalise_title_for_match(title), ${normalised}) DESC
     LIMIT 3
   `;
 
   for (const c of candidates) {
-    const candidateYear = publicationYear(c.publication_date);
+    const candidateYear = publicationYear(c.publicationDate);
     if (year && candidateYear && Math.abs(Number(year) - Number(candidateYear)) > PUBLICATION_YEAR_TOLERANCE) {
       continue;
     }
-    return { id: c.id, canonicalKey: c.canonical_key };
+    return { id: c.id, canonicalKey: c.canonicalKey };
   }
   return null;
 }

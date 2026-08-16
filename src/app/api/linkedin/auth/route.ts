@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { auth } from '@/lib/auth';
+import { env } from '@/lib/env';
 import { generatePkce, generateState, buildAuthUrl } from '@/services/linkedin/oauth';
 
 export async function GET(): Promise<NextResponse> {
@@ -9,12 +10,16 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { verifier, challenge } = generatePkce();
+  // LinkedIn self-serve OAuth does not support PKCE; sending a verifier at the
+  // token step fails client authentication. Opt in with LINKEDIN_USE_PKCE=true
+  // if LinkedIn ever ships support.
+  const usePkce = env.LINKEDIN_USE_PKCE;
+  const pkce = usePkce ? generatePkce() : null;
   const state = generateState();
 
   const authUrl = buildAuthUrl({
     state,
-    codeChallenge: challenge,
+    ...(pkce ? { codeChallenge: pkce.challenge } : {}),
   });
 
   const cookieStore = await cookies();
@@ -25,13 +30,15 @@ export async function GET(): Promise<NextResponse> {
     maxAge: 600, // 10 minutes
     path: '/',
   });
-  cookieStore.set('linkedin_oauth_verifier', verifier, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: 600,
-    path: '/',
-  });
+  if (pkce) {
+    cookieStore.set('linkedin_oauth_verifier', pkce.verifier, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 600,
+      path: '/',
+    });
+  }
 
   return NextResponse.redirect(authUrl);
 }

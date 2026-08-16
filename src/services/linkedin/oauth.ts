@@ -47,7 +47,16 @@ export function generateState(): string {
 
 export interface AuthUrlOptions {
   state: string;
-  codeChallenge: string;
+  /**
+   * Omit to run the plain authorisation-code flow.
+   *
+   * LinkedIn's self-serve OAuth does not implement PKCE. Sending a
+   * `code_verifier` at the token step makes LinkedIn authenticate the request
+   * as a public client, which fails with `invalid_client` even when the
+   * client_id/secret pair is valid. Confidential clients gain nothing from PKCE
+   * here anyway — the secret already proves identity.
+   */
+  codeChallenge?: string;
   scopes?: readonly string[];
 }
 
@@ -59,9 +68,11 @@ export function buildAuthUrl(opts: AuthUrlOptions): string {
     redirect_uri: env.LINKEDIN_REDIRECT_URI,
     state: opts.state,
     scope: (opts.scopes ?? LINKEDIN_SCOPES).join(' '),
-    code_challenge: opts.codeChallenge,
-    code_challenge_method: 'S256',
   });
+  if (opts.codeChallenge) {
+    params.set('code_challenge', opts.codeChallenge);
+    params.set('code_challenge_method', 'S256');
+  }
   return `${AUTHORIZE_URL}?${params.toString()}`;
 }
 
@@ -107,7 +118,7 @@ export interface TokenResponse {
  */
 export async function exchangeCode(
   code: string,
-  codeVerifier: string,
+  codeVerifier?: string,
 ): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -115,8 +126,11 @@ export async function exchangeCode(
     redirect_uri: env.LINKEDIN_REDIRECT_URI,
     client_id: env.LINKEDIN_CLIENT_ID,
     client_secret: env.LINKEDIN_CLIENT_SECRET,
-    code_verifier: codeVerifier,
   });
+  // Only sent when the authorise step used PKCE — see AuthUrlOptions.codeChallenge.
+  if (codeVerifier) {
+    body.set('code_verifier', codeVerifier);
+  }
 
   let raw: Response;
   try {

@@ -27,8 +27,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   cookieStore.delete('linkedin_oauth_state');
   cookieStore.delete('linkedin_oauth_verifier');
 
-  if (!savedState || savedState !== state || !verifier) {
-    logger.warn('LinkedIn OAuth state mismatch or missing verifier');
+  // The verifier cookie only exists when the authorise step used PKCE, which is
+  // off by default for LinkedIn (see the auth route). State is always required.
+  if (!savedState || savedState !== state) {
+    logger.warn('LinkedIn OAuth state mismatch');
     return NextResponse.redirect(new URL('/settings?error=invalid_state', req.url));
   }
 

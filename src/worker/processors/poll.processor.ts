@@ -11,8 +11,7 @@ import { processIngestJob } from '@/services/ingest/paper-ingest';
 import { paperAnalyzeQueue } from '../queues';
 
 // Ensure adapters are registered
-import '@/services/sources/adapters/openalex';
-import '@/services/sources/adapters/orcid';
+import '@/services/sources/adapters';
 
 export interface PollJobData {
   sourceId?: string;
@@ -22,9 +21,10 @@ export async function processPollJob(job: Job<PollJobData>): Promise<void> {
   const { sourceId } = job.data;
   logger.info('Running source poll job', { sourceId });
 
-  const whereClause = sourceId ? { id: sourceId, status: 'ACTIVE' as const } : { status: 'ACTIVE' as const };
   const sources = await db.researchSource.findMany({
-    where: whereClause,
+    where: sourceId
+      ? { id: sourceId, syncStatus: { not: 'DISABLED' } }
+      : { syncStatus: { not: 'DISABLED' } },
   });
 
   for (const source of sources) {

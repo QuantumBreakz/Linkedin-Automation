@@ -151,10 +151,27 @@ const envSchema = z.object({
   LINKEDIN_API_VERSION: withDefault('202601').refine((v) => /^\d{6}$/.test(v), {
     message: 'must be a YYYYMM string, e.g. 202601',
   }),
+  /**
+   * LinkedIn's self-serve OAuth does not implement PKCE — sending a
+   * `code_verifier` makes the token exchange fail `invalid_client` even with
+   * valid credentials. Defaults to off; flip if LinkedIn adds support.
+   */
+  LINKEDIN_USE_PKCE: boolFromEnv(false),
 
   // ── LLM ───────────────────────────────────────────────────────────────
+  /**
+   * Which OpenAI-compatible backend the provider talks to. Both speak the same
+   * `/chat/completions` wire format, so this only switches the base URL, the
+   * credential, and which model chain in ./services/llm/config applies.
+   */
+  LLM_PROVIDER: enumWithDefault(['openrouter', 'groq'] as const, 'openrouter'),
+
   OPENROUTER_API_KEY: requiredString,
   OPENROUTER_BASE_URL: withDefault('https://openrouter.ai/api/v1'),
+
+  /** Required only when LLM_PROVIDER=groq. From https://console.groq.com/keys */
+  GROQ_API_KEY: optionalString(),
+  GROQ_BASE_URL: withDefault('https://api.groq.com/openai/v1'),
 
   // ── Object storage (S3-compatible: MinIO locally, R2/S3 in prod) ──────
   S3_ENDPOINT: urlString,

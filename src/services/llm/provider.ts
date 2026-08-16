@@ -18,21 +18,48 @@ import { env } from '@/lib/env';
 import { logger } from '@/lib/logger';
 import { UpstreamError } from '@/lib/errors';
 import { db } from '@/lib/db';
-import { getChain } from './config';
+import { ConfigError } from '@/lib/errors';
+import { getChain, activeProvider } from './config';
 import type { CompleteArgs, LlmResult, LlmAttempt, LlmUsage, ModelRole } from './types';
 import { EMPTY_USAGE } from './types';
 
 // ─────────────────────────────  constants  ─────────────────────────
 
-const PROVIDER_NAME = 'openrouter';
-/** Models confirmed to support json_schema structured output on OpenRouter. */
+/** Models confirmed to support json_schema structured output. */
 const JSON_SCHEMA_MODELS = new Set([
+  // OpenRouter slugs
   'openai/gpt-4o',
   'openai/gpt-4o-mini',
   'openai/gpt-4-turbo',
+  // Groq slugs
+  'openai/gpt-oss-120b',
+  'openai/gpt-oss-20b',
 ]);
 
 const MAX_REPAIR_ATTEMPTS = 1;
+
+/**
+ * Endpoint, credential and outbound headers for the active backend.
+ *
+ * Both backends expose the same OpenAI-compatible `/chat/completions`, so the
+ * only differences are the base URL, which key to send, and the OpenRouter-only
+ * attribution headers (harmless elsewhere, but not sent to keep requests clean).
+ */
+function resolveBackend(): { baseUrl: string; apiKey: string; headers: Record<string, string> } {
+  if (activeProvider() === 'groq') {
+    const apiKey = env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new ConfigError('LLM_PROVIDER=groq requires GROQ_API_KEY (https://console.groq.com/keys).');
+    }
+    return { baseUrl: env.GROQ_BASE_URL, apiKey, headers: {} };
+  }
+
+  return {
+    baseUrl: env.OPENROUTER_BASE_URL,
+    apiKey: env.OPENROUTER_API_KEY,
+    headers: { 'HTTP-Referer': env.APP_URL, 'X-Title': env.APP_NAME },
+  };
+}
 
 // ─────────────────────────────  helpers  ───────────────────────────
 
@@ -59,7 +86,7 @@ function extractUsage(data: Record<string, unknown>): LlmUsage {
 // ─────────────────────────────  provider  ──────────────────────────
 
 export class OpenRouterProvider {
-  readonly name = PROVIDER_NAME;
+  readonly name = activeProvider();
 
   async complete<T = unknown>(args: CompleteArgs<T>): Promise<LlmResult<T>> {
     const chain = getChain(args.role);
@@ -81,7 +108,7 @@ export class OpenRouterProvider {
       if (attempt.ok) {
         const latencyMs = Date.now() - wallStart;
         const result: LlmResult<T> = {
-          provider: PROVIDER_NAME,
+          provider: activeProvider(),
           role: args.role,
           modelId,
           text: attempt.text,
@@ -132,13 +159,13 @@ export class OpenRouterProvider {
     let raw: Response;
     let httpStatus: number | null = null;
     try {
-      raw = await fetch(`${env.OPENROUTER_BASE_URL}/chat/completions`, {
+      const backend = resolveBackend();
+      raw = await fetch(`${backend.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${backend.apiKey}`,
           'Content-Type': 'application/json',
-          'HTTP-Referer': env.APP_URL,
-          'X-Title': env.APP_NAME,
+          ...backend.headers,
         },
         body: JSON.stringify(payload),
         signal: controller.signal,
@@ -247,13 +274,13 @@ export class OpenRouterProvider {
       const repairPayload = this._buildRepairPayload(payload, text);
       let repairRaw: Response;
       try {
-        repairRaw = await fetch(`${env.OPENROUTER_BASE_URL}/chat/completions`, {
+        const repairBackend = resolveBackend();
+        repairRaw = await fetch(`${repairBackend.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+            Authorization: `Bearer ${repairBackend.apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': env.APP_URL,
-            'X-Title': env.APP_NAME,
+            ...repairBackend.headers,
           },
           body: JSON.stringify(repairPayload),
         });
@@ -392,7 +419,7 @@ export class OpenRouterProvider {
         data: {
           userId: (args as CompleteArgs<T> & { userId?: string }).userId ?? null,
           role: result.role,
-          provider: PROVIDER_NAME,
+          provider: activeProvider(),
           modelId: result.modelId,
           purpose: (args as CompleteArgs<T> & { purpose?: string }).purpose ?? 'unknown',
           refType: (args as CompleteArgs<T> & { refType?: string }).refType ?? null,
@@ -433,10 +460,16 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
     const required: string[] = [];
     const shape = (schema as z.ZodObject<any>).shape as Record<string, any>;
     for (const [key, value] of Object.entries(shape)) {
-      properties[key] = zodToJsonSchema(value as z.ZodTypeAny);
-      if (!(value instanceof z.ZodOptional)) required.push(key);
+      const inner = zodToJsonSchema(value as z.ZodTypeAny);
+      // Strict mode forbids omitting a key from `required`, so an optional
+      // field is expressed as "present but nullable" instead of absent.
+      properties[key] = value instanceof z.ZodOptional ? asNullable(inner) : inner;
+      required.push(key);
     }
-    return { type: 'object', properties, required };
+    // Under strict json_schema both OpenAI and Groq reject the request (HTTP
+    // 400) unless every object sets `additionalProperties: false` and lists
+    // every property in `required` — nested objects included, not just the root.
+    return { type: 'object', properties, required, additionalProperties: false };
   }
   if (schema instanceof z.ZodOptional) return zodToJsonSchema((schema as any).unwrap());
   if (schema instanceof z.ZodArray) return { type: 'array', items: zodToJsonSchema((schema as any).element) };
@@ -447,9 +480,22 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   if (schema instanceof z.ZodString) return { type: 'string' };
   if (schema instanceof z.ZodNumber) return { type: 'number' };
   if (schema instanceof z.ZodBoolean) return { type: 'boolean' };
-  if (schema instanceof z.ZodNullable) return { ...zodToJsonSchema((schema as any).unwrap()), nullable: true };
+  if (schema instanceof z.ZodNullable) return asNullable(zodToJsonSchema((schema as any).unwrap()));
   // fallback
   return {};
+}
+
+/**
+ * Marks a converted schema as nullable using a `type` union.
+ *
+ * The draft-4 style `{ nullable: true }` is not recognised under strict
+ * json_schema mode; `type: ["string", "null"]` is the accepted spelling.
+ */
+function asNullable(js: Record<string, unknown>): Record<string, unknown> {
+  const type = js['type'];
+  if (typeof type === 'string') return { ...js, type: [type, 'null'] };
+  if (Array.isArray(type) && !type.includes('null')) return { ...js, type: [...type, 'null'] };
+  return js;
 }
 
 /** Singleton. Import this, not the class directly. */
