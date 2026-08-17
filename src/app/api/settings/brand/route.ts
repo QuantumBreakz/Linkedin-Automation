@@ -1,78 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { z } from 'zod';
 import { db } from '@/lib/db';
+import { withUser, badRequest } from '@/lib/session';
+
+const BrandSchema = z.object({
+  tone: z.enum(['PROFESSIONAL', 'CONVERSATIONAL', 'ACADEMIC', 'ENTHUSIASTIC']).optional(),
+  technicality: z.enum(['BEGINNER', 'INTERMEDIATE', 'EXPERT']).optional(),
+  postLength: z.enum(['SHORT', 'MEDIUM', 'LONG']).optional(),
+  emojiUsage: z.enum(['NONE', 'LOW', 'MODERATE']).optional(),
+  ctaEnabled: z.boolean().optional(),
+  hashtagsEnabled: z.boolean().optional(),
+  firstPerson: z.boolean().optional(),
+  customInstructions: z.string().max(2000).nullable().optional(),
+});
 
 export async function GET(): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const brand = await db.brandProfile.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+    });
 
-  let brand = await db.brandProfile.findUnique({
-    where: { userId: session.user.id },
-  });
-
-  if (!brand) {
-    brand = await db.brandProfile.create({
-      data: {
-        userId: session.user.id,
-        tone: 'PROFESSIONAL',
-        technicality: 'INTERMEDIATE',
-        postLength: 'MEDIUM',
-        emojiUsage: 'LOW',
+    const linkedin = await db.linkedInAccount.findUnique({
+      where: { userId },
+      select: {
+        id: true,
+        personUrn: true,
+        displayName: true,
+        avatarUrl: true,
+        status: true,
+        accessTokenExpires: true,
       },
     });
-  }
 
-  const linkedin = await db.linkedInAccount.findUnique({
-    where: { userId: session.user.id },
-    select: {
-      id: true,
-      personUrn: true,
-      displayName: true,
-      avatarUrl: true,
-      status: true,
-      accessTokenExpires: true,
-    },
+    return NextResponse.json({ brand, linkedin });
   });
-
-  return NextResponse.json({ brand, linkedin });
 }
 
 export async function PUT(req: NextRequest): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const parsed = BrandSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return badRequest(parsed.error.issues[0]?.message ?? 'Invalid voice profile.');
+    }
 
-  const body = await req.json();
+    const brand = await db.brandProfile.upsert({
+      where: { userId },
+      create: { userId, ...parsed.data },
+      update: parsed.data,
+    });
 
-  const brand = await db.brandProfile.upsert({
-    where: { userId: session.user.id },
-    create: {
-      userId: session.user.id,
-      tone: body.tone ?? 'PROFESSIONAL',
-      technicality: body.technicality ?? 'INTERMEDIATE',
-      postLength: body.postLength ?? 'MEDIUM',
-      emojiUsage: body.emojiUsage ?? 'LOW',
-      ctaEnabled: body.ctaEnabled ?? true,
-      hashtagsEnabled: body.hashtagsEnabled ?? true,
-      firstPerson: body.firstPerson ?? true,
-      customInstructions: body.customInstructions ?? null,
-      styleSamples: body.styleSamples ?? [],
-    },
-    update: {
-      tone: body.tone,
-      technicality: body.technicality,
-      postLength: body.postLength,
-      emojiUsage: body.emojiUsage,
-      ctaEnabled: body.ctaEnabled,
-      hashtagsEnabled: body.hashtagsEnabled,
-      firstPerson: body.firstPerson,
-      customInstructions: body.customInstructions,
-      styleSamples: body.styleSamples,
-    },
+    return NextResponse.json({ brand });
   });
-
-  return NextResponse.json({ brand });
 }

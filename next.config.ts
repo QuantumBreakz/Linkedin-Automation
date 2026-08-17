@@ -8,6 +8,12 @@ import type { NextConfig } from 'next';
  */
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  /**
+   * Defaults to `.next`. Override with NEXT_DIST_DIR to run a production build
+   * without clobbering the artefacts a `next dev` server is serving from —
+   * `NEXT_DIST_DIR=.next-build npm run build`.
+   */
+  distDir: process.env.NEXT_DIST_DIR ?? '.next',
   serverExternalPackages: [
     '@prisma/client',
     'prisma',

@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { requireUserId, UnauthorizedError } from '@/lib/session';
 import { renderVisual } from '@/services/visual/render';
 import { VisualSpecSchema } from '@/services/visual/visual-types';
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // Renders from the posted spec only — nothing is read from the database, so
+  // the session check here is about not offering free rendering to the world.
+  try {
+    await requireUserId();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return err.response;
+    throw err;
   }
 
   const body = await req.json();

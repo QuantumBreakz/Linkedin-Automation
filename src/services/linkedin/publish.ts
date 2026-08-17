@@ -1,0 +1,179 @@
+/**
+ * Publishing a draft to LinkedIn.
+ *
+ * The single implementation behind both entry points:
+ *
+ *  - the `post.publish` BullMQ processor, for scheduled posts;
+ *  - `POST /api/drafts/:id/approve` with `publishNow`, which awaits this
+ *    directly so the person who just clicked "Approve & publish" is told
+ *    whether it worked instead of watching a spinner and hoping.
+ *
+ * Two invariants the caller cannot opt out of:
+ *
+ *  1. **Ownership.** The draft is loaded with `userId` in the WHERE clause and
+ *     the LinkedIn account is looked up from that same id. A draft can only
+ *     ever be posted to its own owner's feed.
+ *  2. **Approval.** A draft that the user has not approved is never posted.
+ *     `AUTOMATIC` approval mode is applied when the draft is created, not
+ *     here — by the time anything reaches this function, a human (or an
+ *     explicit account-level setting) has said yes.
+ */
+
+import { db } from '@/lib/db';
+import { logger } from '@/lib/logger';
+import { publishIdempotencyKey } from '@/lib/ids';
+import { getStorage } from '@/lib/storage';
+import { decryptAccessToken, postText, postWithImage } from '@/services/linkedin/client';
+
+export type PublishFailureReason =
+  | 'draft_not_found'
+  | 'not_approved'
+  | 'no_linkedin_account'
+  | 'linkedin_error';
+
+export type PublishOutcome =
+  | {
+      ok: true;
+      alreadyPublished: boolean;
+      urn: string | null;
+      permalink: string | null;
+      /** True when LINKEDIN_DRY_RUN blocked the real API call. */
+      dryRun: boolean;
+    }
+  | { ok: false; reason: PublishFailureReason; message: string };
+
+/** Statuses from which publishing is legitimate. */
+const PUBLISHABLE = new Set(['APPROVED', 'SCHEDULED', 'PUBLISHING']);
+
+export async function publishDraft(args: {
+  draftId: string;
+  userId: string;
+}): Promise<PublishOutcome> {
+  const { draftId, userId } = args;
+
+  const draft = await db.contentDraft.findFirst({
+    where: { id: draftId, userId },
+    include: { visuals: true },
+  });
+
+  if (!draft) {
+    logger.warn('Publish requested for a draft the user does not own', { draftId, userId });
+    return { ok: false, reason: 'draft_not_found', message: 'Draft not found.' };
+  }
+
+  if (draft.status === 'PUBLISHED') {
+    const existing = await db.publishedPost.findUnique({ where: { draftId } });
+    return {
+      ok: true,
+      alreadyPublished: true,
+      urn: existing?.linkedinUrn ?? null,
+      permalink: existing?.permalink ?? null,
+      dryRun: existing?.apiSurface === 'dry-run',
+    };
+  }
+
+  if (!PUBLISHABLE.has(draft.status)) {
+    return {
+      ok: false,
+      reason: 'not_approved',
+      message: 'This draft has not been approved yet, so it was not posted.',
+    };
+  }
+
+  const account = await db.linkedInAccount.findUnique({ where: { userId } });
+
+  if (!account || account.status === 'EXPIRED' || account.status === 'REVOKED') {
+    // The draft keeps its status. Nothing was attempted, so marking it FAILED
+    // would make an unconnected account look like a rejected post — and would
+    // force the user to redo an approval they already gave.
+    return {
+      ok: false,
+      reason: 'no_linkedin_account',
+      message: 'Connect a LinkedIn account in Settings before publishing.',
+    };
+  }
+
+  // PUBLISHING is a lock as much as a status: a second call landing while the
+  // first is in flight sees a status that is not in PUBLISHABLE... except that
+  // it is, deliberately, so a crashed run can be retried. The real duplicate
+  // guard is the idempotency key, which LinkedIn dedupes on.
+  await db.contentDraft.update({ where: { id: draftId }, data: { status: 'PUBLISHING' } });
+
+  const accessToken = decryptAccessToken(account.accessTokenEnc);
+  const idempotencyKey = publishIdempotencyKey(draft.id);
+  const fullText =
+    draft.hashtags.length > 0
+      ? `${draft.body}\n\n${draft.hashtags.map((h) => (h.startsWith('#') ? h : `#${h}`)).join(' ')}`
+      : draft.body;
+
+  try {
+    const primaryVisual = draft.visuals.find((v) => v.isPrimary) ?? draft.visuals[0];
+    let result;
+
+    if (primaryVisual?.storageKey) {
+      const imageSignedUrl = await getStorage().getSignedUrl(primaryVisual.storageKey, 300);
+      const imageResp = await fetch(imageSignedUrl);
+      const imageBuffer = Buffer.from(await imageResp.arrayBuffer());
+
+      result = await postWithImage({
+        authorUrn: account.personUrn,
+        accessToken,
+        text: fullText,
+        linkUrl: draft.linkUrl ?? undefined,
+        idempotencyKey,
+        imageBuffer,
+        imageMimeType: 'image/png',
+        altText: primaryVisual.altText || 'Research summary visual card',
+      });
+    } else {
+      result = await postText({
+        authorUrn: account.personUrn,
+        accessToken,
+        text: fullText,
+        linkUrl: draft.linkUrl ?? undefined,
+        idempotencyKey,
+      });
+    }
+
+    await db.$transaction([
+      db.contentDraft.update({ where: { id: draftId }, data: { status: 'PUBLISHED' } }),
+      db.publishedPost.upsert({
+        where: { draftId },
+        create: {
+          draftId,
+          accountId: account.id,
+          idempotencyKey,
+          linkedinUrn: result.urn,
+          permalink: result.permalink,
+          publishedAt: new Date(),
+          apiSurface: result.surface,
+          response: result.rawResponse as object,
+        },
+        update: {
+          linkedinUrn: result.urn,
+          permalink: result.permalink,
+          publishedAt: new Date(),
+          apiSurface: result.surface,
+          response: result.rawResponse as object,
+        },
+      }),
+    ]);
+
+    logger.info('Draft published to LinkedIn', { draftId, urn: result.urn, surface: result.surface });
+    return {
+      ok: true,
+      alreadyPublished: false,
+      urn: result.urn,
+      permalink: result.permalink,
+      dryRun: result.surface === 'dry-run',
+    };
+  } catch (err) {
+    logger.error('LinkedIn publishing failed', { draftId, err });
+    await db.contentDraft.update({ where: { id: draftId }, data: { status: 'FAILED' } });
+    return {
+      ok: false,
+      reason: 'linkedin_error',
+      message: err instanceof Error ? err.message : 'LinkedIn rejected the post.',
+    };
+  }
+}

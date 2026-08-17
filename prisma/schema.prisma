@@ -27,10 +27,15 @@ datasource db {
 // ─────────────────────────────  Identity  ─────────────────────────────
 
 model User {
-  id             String       @id @default(cuid())
-  email          String       @unique
+  id    String @id @default(cuid())
+  email String @unique
+  /// scrypt envelope — `scrypt$N$r$p$<salt b64>$<hash b64>`. See src/lib/password.ts.
+  /// Nullable only so that rows created before password auth existed can still
+  /// be read; `authorize()` refuses to sign in an account without one.
+  passwordHash   String?
   name           String
   title          String? // "PhD Researcher in Computational Biology"
+  avatarUrl      String?
   fieldOfStudy   String?
   bio            String?
   researchAreas  String[]
@@ -40,6 +45,7 @@ model User {
   orcid          String?      @unique
   orcidVerified  Boolean      @default(false)
   approvalMode   ApprovalMode @default(APPROVAL_REQUIRED)
+  lastLoginAt    DateTime?
   createdAt      DateTime     @default(now())
 
   brandProfile    BrandProfile?
@@ -49,6 +55,8 @@ model User {
   drafts          ContentDraft[]
   scheduleSlots   ScheduleSlot[]
   llmRequests     LlmRequest[]
+  conversations   ChatConversation[]
+  chatMessages    ChatMessage[]
 }
 
 enum ApprovalMode {
@@ -290,13 +298,20 @@ enum AnalysisStatus {
 }
 
 model ContentDraft {
-  id         String        @id @default(cuid())
-  userId     String
-  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  paperId    String
-  paper      ResearchPaper @relation(fields: [paperId], references: [id])
-  analysisId String
-  analysis   PaperAnalysis @relation(fields: [analysisId], references: [id])
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Null for drafts composed in chat — those have no paper behind them.
+  /// Pipeline-generated drafts always carry both of these.
+  paperId    String?
+  paper      ResearchPaper? @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  analysisId String?
+  analysis   PaperAnalysis? @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  origin         DraftOrigin       @default(PIPELINE)
+  conversationId String?
+  conversation   ChatConversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   format   ContentFormat
   body     String
@@ -313,10 +328,18 @@ model ContentDraft {
   editedByUser Boolean     @default(false)
   createdAt    DateTime    @default(now())
 
-  visuals   VisualAsset[]
-  published PublishedPost?
+  visuals      VisualAsset[]
+  published    PublishedPost?
+  chatMessages ChatMessage[]
 
   @@index([userId, status, scheduledFor])
+  @@index([userId, createdAt])
+}
+
+enum DraftOrigin {
+  PIPELINE
+  CHAT
+  MANUAL
 }
 
 enum ContentFormat {
@@ -378,11 +401,16 @@ model ScheduleSlot {
 }
 
 model PublishedPost {
-  id        String          @id @default(cuid())
+  id String @id @default(cuid())
+
+  // Both sides cascade so that deleting an account really does remove
+  // everything belonging to it. Without this, a user who has ever published is
+  // undeletable — the FK from this table blocks it — which would make the
+  // "deleting your account removes all of it" promise in the UI a lie.
   draftId   String          @unique
-  draft     ContentDraft    @relation(fields: [draftId], references: [id])
+  draft     ContentDraft    @relation(fields: [draftId], references: [id], onDelete: Cascade)
   accountId String
-  account   LinkedInAccount @relation(fields: [accountId], references: [id])
+  account   LinkedInAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   idempotencyKey String    @unique
   linkedinUrn    String? // urn:li:share:… from X-RestLi-Id
@@ -412,6 +440,60 @@ model PostMetric {
 enum MetricSource {
   MANUAL
   API
+}
+
+// ───────────────────────────────  Chat  ───────────────────────────────
+//
+// One conversation = one tab in the workspace. Both models carry `userId`,
+// not just the conversation: every read path filters on it, so a message can
+// never be reached through a mis-scoped join. Deleting a user or a
+// conversation cascades — chat history is never left orphaned and readable.
+
+model ChatConversation {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title         String   @default("New chat")
+  pinned        Boolean  @default(false)
+  archived      Boolean  @default(false)
+  /// Denormalised from the newest message so the sidebar sorts without a join.
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages ChatMessage[]
+  drafts   ContentDraft[]
+
+  @@index([userId, archived, lastMessageAt])
+}
+
+model ChatMessage {
+  id             String           @id @default(cuid())
+  conversationId String
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// Denormalised owner. Redundant with conversation.userId on purpose: it
+  /// makes every message query independently scopable to one user.
+  userId         String
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role    ChatRole
+  content String
+  /// Set when this turn produced a post draft, so the thread can link to it.
+  draftId String?
+  draft   ContentDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  /// Model id, token usage, error flags — never rendered as prose.
+  meta    Json          @default("{}")
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([userId, createdAt])
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
 }
 
 // ──────────────────────────  Observability  ───────────────────────────

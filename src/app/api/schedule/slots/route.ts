@@ -1,72 +1,49 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { z } from 'zod';
 import { db } from '@/lib/db';
+import { withUser, badRequest } from '@/lib/session';
+
+const SlotSchema = z.object({
+  dayOfWeek: z.number().int().min(0).max(6),
+  timeOfDay: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour HH:MM time.'),
+});
 
 export async function GET(): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const slots = await db.scheduleSlot.findMany({
-    where: { userId: session.user.id },
-    orderBy: [{ dayOfWeek: 'asc' }, { timeOfDay: 'asc' }],
+  return withUser(async (userId) => {
+    const slots = await db.scheduleSlot.findMany({
+      where: { userId },
+      orderBy: [{ dayOfWeek: 'asc' }, { timeOfDay: 'asc' }],
+    });
+    return NextResponse.json({ slots });
   });
-
-  return NextResponse.json({ slots });
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const parsed = SlotSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return badRequest(parsed.error.issues[0]?.message ?? 'Invalid slot.');
+    }
+    const { dayOfWeek, timeOfDay } = parsed.data;
 
-  const body = await req.json();
-  const { dayOfWeek, timeOfDay } = body as { dayOfWeek: number; timeOfDay: string };
+    const slot = await db.scheduleSlot.upsert({
+      where: { userId_dayOfWeek_timeOfDay: { userId, dayOfWeek, timeOfDay } },
+      create: { userId, dayOfWeek, timeOfDay, active: true },
+      update: { active: true },
+    });
 
-  if (typeof dayOfWeek !== 'number' || !timeOfDay) {
-    return NextResponse.json({ error: 'dayOfWeek and timeOfDay are required' }, { status: 400 });
-  }
-
-  const slot = await db.scheduleSlot.upsert({
-    where: {
-      userId_dayOfWeek_timeOfDay: {
-        userId: session.user.id,
-        dayOfWeek,
-        timeOfDay,
-      },
-    },
-    create: {
-      userId: session.user.id,
-      dayOfWeek,
-      timeOfDay,
-      active: true,
-    },
-    update: {
-      active: true,
-    },
+    return NextResponse.json({ slot }, { status: 201 });
   });
-
-  return NextResponse.json({ slot }, { status: 201 });
 }
 
 export async function DELETE(req: NextRequest): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return badRequest('id parameter is required');
 
-  const { searchParams } = new URL(req.url);
-  const id = searchParams.get('id');
-
-  if (!id) {
-    return NextResponse.json({ error: 'id parameter is required' }, { status: 400 });
-  }
-
-  await db.scheduleSlot.deleteMany({
-    where: { id, userId: session.user.id },
+    // deleteMany with the owner in the filter: another user's slot id deletes
+    // nothing rather than deleting their slot.
+    const result = await db.scheduleSlot.deleteMany({ where: { id, userId } });
+    return NextResponse.json({ success: true, deleted: result.count });
   });
-
-  return NextResponse.json({ success: true });
 }
