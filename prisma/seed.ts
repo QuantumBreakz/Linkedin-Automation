@@ -8,23 +8,31 @@
  */
 
 import { PrismaClient } from '@prisma/client';
+import { hashPassword } from '../src/lib/password';
 
 const prisma = new PrismaClient();
+
+/** Dev-only credentials. Never seeded outside a local database. */
+const DEMO_EMAIL = 'demo@university.edu';
+const DEMO_PASSWORD = 'researchly-demo';
 
 async function main() {
   console.log('Seeding development database...');
 
-  // Create demo user
+  // Create demo user. The password hash is set on update too, so an account
+  // seeded before password auth existed becomes signable-in on the next run.
+  const passwordHash = await hashPassword(DEMO_PASSWORD);
   const user = await prisma.user.upsert({
-    where: { email: 'demo@university.edu' },
+    where: { email: DEMO_EMAIL },
     create: {
-      email: 'demo@university.edu',
+      email: DEMO_EMAIL,
       name: 'Dr. Elena Rostova',
       title: 'Principal Investigator in NeuroAI',
       fieldOfStudy: 'Computational Neuroscience & Deep Learning',
       timezone: 'America/New_York',
+      passwordHash,
     },
-    update: {},
+    update: { passwordHash },
   });
 
   // Create brand profile
@@ -193,7 +201,9 @@ async function main() {
       body: `One of the largest hurdles in neural prosthetics has been power: real-time decoding burns battery fast.\n\nIn our new work published in Nature Neuroscience, we show how a spiking architecture can decode motor intent at 94.2% accuracy while cutting power consumption by 4.1x across 12 in-vivo primate datasets.\n\nKey takeaways:\n1. 94.2% decoding accuracy maintained in real-time.\n2. 4.1x power reduction compared to conventional models.\n3. Robust generalization across 12 animal subjects.\n\nProud of the team at the NeuroAI Lab for making this possible!`,
       hashtags: ['#Neuroscience', '#MachineLearning', '#BrainComputerInterfaces', '#Research'],
       linkUrl: 'https://doi.org/10.1038/s41586-024-0001-x',
-      status: 'APPROVED',
+      // NEEDS_REVIEW, not APPROVED: a freshly seeded database should demo the
+      // approval gate, not present a post that looks ready to fire.
+      status: 'NEEDS_REVIEW',
       verificationStatus: 'PASSED',
       verification: {
         claims: [
@@ -210,6 +220,7 @@ async function main() {
   });
 
   console.log('Database seeded successfully!');
+  console.log(`Sign in with ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
 }
 
 main()
