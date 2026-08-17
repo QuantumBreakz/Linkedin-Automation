@@ -1,5 +1,6 @@
 # Research-to-LinkedIn Automation Platform
 
+
 > **Transform published scientific breakthroughs into authentic, factual, and verified LinkedIn content.**
 
 An enterprise-grade, privacy-first automation platform built for researchers, scientists, and academics. Connect your research identity once (via ORCID, OpenAlex, arXiv, PubMed, or Crossref), and the platform continuously discovers new papers, extracts verified findings, generates voice-aligned drafts, verifies every claim against source evidence, renders deterministic visual cards, and publishes on your LinkedIn schedule.
