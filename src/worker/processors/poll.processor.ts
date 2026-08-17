@@ -68,11 +68,20 @@ export async function processPollJob(job: Job<PollJobData>): Promise<void> {
         }
       }
 
-      // Update source cursor and last checked time
+      // Update source cursor and last checked time.
+      //
+      // Store nextCursor verbatim — including null. Per the adapter contract a
+      // null nextCursor means "all pages fetched for this sync cycle", and every
+      // paginated adapter sorts newest-first, so resetting to null is what makes
+      // the *next* cycle start again at page 0 and pick up newly published work
+      // (already-seen papers dedupe on canonicalKey, so re-scanning is cheap and
+      // never re-drafts). The old `?? source.cursor` fallback pinned the cursor
+      // at the final offset forever, so after the initial backfill the poller
+      // re-fetched the same trailing page and never saw a new paper again.
       await db.researchSource.update({
         where: { id: source.id },
         data: {
-          cursor: fetchResult.nextCursor ?? source.cursor,
+          cursor: fetchResult.nextCursor,
           lastCheckedAt: new Date(),
           lastSuccessAt: new Date(),
           syncStatus: 'OK',

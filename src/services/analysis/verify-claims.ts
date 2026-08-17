@@ -12,8 +12,9 @@
  */
 
 import { z } from 'zod';
+import { logger } from '@/lib/logger';
 import type { LlmProvider } from '../llm/types';
-import type { ResearchExtraction, ImportantNumber } from '../content/types';
+import type { ResearchExtraction } from '../content/types';
 import { importantNumbers as getImportantNumbers } from '../content/types';
 
 // ─────────────────────────────  schema  ─────────────────────────────
@@ -153,23 +154,39 @@ export async function verifyDraft(
 ): Promise<VerificationReport> {
   const { system, user } = buildVerifyPrompt(input.draftBody, input.extraction);
 
-  // Run deterministic checks and LLM in parallel
+  // Run deterministic checks and LLM in parallel.
+  //
+  // The provider throws when its whole model chain is exhausted, so the LLM
+  // call is caught here and degraded to null. Without this catch the throw
+  // would propagate out of verifyDraft and (since the draft is persisted only
+  // *after* verification) the finished draft would be discarded entirely —
+  // a verify-model outage would silently eat the user's post. Degrading to the
+  // deterministic-only report below instead lands it in the review queue.
   const [detChecks, llmResult] = await Promise.all([
     Promise.resolve(runDeterministicChecks(input.draftBody, input.extraction, input.sourceText)),
-    llm.complete<VerificationReport>({
-      role: 'verify',
-      system,
-      messages: [{ role: 'user', content: user }],
-      schema: VerificationReportSchema,
-      schemaName: 'VerificationReport',
-      temperature: 0,
-      ...(opts.userId ? { userId: opts.userId } : {}),
-      ...(opts.draftId ? { refType: 'draft', refId: opts.draftId } : {}),
-    } as Parameters<LlmProvider['complete']>[0]),
+    llm
+      .complete<VerificationReport>({
+        role: 'verify',
+        system,
+        messages: [{ role: 'user', content: user }],
+        schema: VerificationReportSchema,
+        schemaName: 'VerificationReport',
+        temperature: 0,
+        ...(opts.userId ? { userId: opts.userId } : {}),
+        ...(opts.draftId ? { refType: 'draft', refId: opts.draftId } : {}),
+      } as Parameters<LlmProvider['complete']>[0])
+      .catch((err: unknown) => {
+        logger.warn('Verify LLM call failed; using deterministic-only report', {
+          err,
+          draftId: opts.draftId,
+        });
+        return null;
+      }),
   ]);
 
-  // If LLM failed, produce a deterministic-only report
-  const llmReport = llmResult.parsed;
+  // If the LLM failed or its output did not parse, produce a deterministic-only
+  // report. Never PASS on this path — an unverified draft must be reviewed.
+  const llmReport = llmResult?.parsed ?? null;
   if (!llmReport) {
     return {
       claims: [],

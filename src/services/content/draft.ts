@@ -90,7 +90,6 @@ CRITICAL RULES:
 ${fewShotSection}`;
 
   // Build extraction digest — stated claims only, absent fields omitted
-  const stated = statedClaims;
   const digest: Record<string, unknown> = {};
 
   if (isStated(extraction.problem)) {
@@ -132,10 +131,20 @@ ${fewShotSection}`;
     ? paper.authors.map((a) => a.name).join(', ')
     : 'Unknown authors';
 
+  // publicationDate arrives as a Date (Prisma) or a partial ISO string. Format
+  // to YYYY-MM: `String(new Date(...))` would yield "Mon Aug 18 2026 …", whose
+  // first seven chars are "Mon Aug" — a mangled date the model then parrots into
+  // the post. Guard against an unparseable value rather than emitting garbage.
+  const publicationMonth = (() => {
+    if (!paper.publicationDate) return null;
+    const d = new Date(paper.publicationDate as string | Date);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 7);
+  })();
+
   const paperInfo = [
     `Title: ${paper.title}`,
     paper.venue ? `Published in: ${paper.venue}` : null,
-    paper.publicationDate ? `Date: ${String(paper.publicationDate).slice(0, 7)}` : null,
+    publicationMonth ? `Date: ${publicationMonth}` : null,
     `Authors: ${authorList}`,
     paper.landingUrl ? `Link: ${paper.landingUrl}` : paper.doi ? `DOI: ${paper.doi}` : null,
   ]

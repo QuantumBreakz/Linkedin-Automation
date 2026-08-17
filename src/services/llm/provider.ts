@@ -20,7 +20,7 @@ import { UpstreamError } from '@/lib/errors';
 import { db } from '@/lib/db';
 import { ConfigError } from '@/lib/errors';
 import { getChain, activeProvider } from './config';
-import type { CompleteArgs, LlmResult, LlmAttempt, LlmUsage, ModelRole } from './types';
+import type { CompleteArgs, LlmResult, LlmAttempt, LlmUsage } from './types';
 import { EMPTY_USAGE } from './types';
 
 // ─────────────────────────────  constants  ─────────────────────────
@@ -102,7 +102,7 @@ export class OpenRouterProvider {
         await sleep(jitter(1_000 * Math.pow(2, ci - 1)));
       }
 
-      const attempt = await this._trySingleModel<T>(args, modelId, entry.timeoutMs);
+      const attempt = await this._trySingleModel<T>(args, modelId, entry.timeoutMs, entry.maxTokens);
       attempts.push(...attempt.attempts);
 
       if (attempt.ok) {
@@ -137,6 +137,7 @@ export class OpenRouterProvider {
     args: CompleteArgs<T>,
     modelId: string,
     timeoutMs?: number,
+    maxTokens?: number,
   ): Promise<{
     ok: boolean;
     text: string;
@@ -148,7 +149,7 @@ export class OpenRouterProvider {
     const useJsonSchema = !!args.schema && JSON_SCHEMA_MODELS.has(modelId);
     const useJsonMode = !!args.schema && !useJsonSchema;
 
-    const payload = this._buildPayload(args, modelId, useJsonSchema, useJsonMode);
+    const payload = this._buildPayload(args, modelId, useJsonSchema, useJsonMode, maxTokens);
     const start = Date.now();
     const controller = new AbortController();
     const timeout = setTimeout(
@@ -273,6 +274,11 @@ export class OpenRouterProvider {
       const repairStart = Date.now();
       const repairPayload = this._buildRepairPayload(payload, text);
       let repairRaw: Response;
+      // The repair call needs the same timeout guard as the primary; without a
+      // signal a stalled connection hangs the worker for undici's ~5-minute
+      // default instead of the configured 15-60s.
+      const repairController = new AbortController();
+      const repairTimeout = setTimeout(() => repairController.abort(), timeoutMs ?? 60_000);
       try {
         const repairBackend = resolveBackend();
         repairRaw = await fetch(`${repairBackend.baseUrl}/chat/completions`, {
@@ -283,6 +289,7 @@ export class OpenRouterProvider {
             ...repairBackend.headers,
           },
           body: JSON.stringify(repairPayload),
+          signal: repairController.signal,
         });
       } catch {
         allAttempts.push({
@@ -296,6 +303,8 @@ export class OpenRouterProvider {
           error: 'repair transport failure',
         });
         break;
+      } finally {
+        clearTimeout(repairTimeout);
       }
 
       if (!repairRaw.ok) {
@@ -357,6 +366,7 @@ export class OpenRouterProvider {
     modelId: string,
     useJsonSchema: boolean,
     useJsonMode: boolean,
+    maxTokens?: number,
   ): Record<string, unknown> {
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: args.system },
@@ -367,7 +377,10 @@ export class OpenRouterProvider {
       model: modelId,
       messages,
       temperature: args.temperature ?? 0.3,
-      max_tokens: args.maxTokens,
+      // Caller override wins; otherwise the per-model cap from config. Falls back
+      // to undefined (provider default) only when neither is set — which is what
+      // left the verify role sending no max_tokens at all.
+      max_tokens: args.maxTokens ?? maxTokens,
     };
 
     if (useJsonSchema && args.schema) {
@@ -472,6 +485,15 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
     return { type: 'object', properties, required, additionalProperties: false };
   }
   if (schema instanceof z.ZodOptional) return zodToJsonSchema((schema as any).unwrap());
+  // A `.default(...)` field is required-and-present from json_schema's point of
+  // view — the model must still emit it. Unwrap to the inner type. Without this
+  // branch it fell through to `return {}`, producing a property with no `type`,
+  // which strict json_schema mode rejects with HTTP 400 — so every draft (whose
+  // schema has `hashtags: z.array(...).default([])`) failed on the primary model
+  // and silently fell back to a weaker one.
+  if (schema instanceof z.ZodDefault) {
+    return zodToJsonSchema((schema as unknown as { _def: { innerType: z.ZodTypeAny } })._def.innerType);
+  }
   if (schema instanceof z.ZodArray) return { type: 'array', items: zodToJsonSchema((schema as any).element) };
   if (schema instanceof z.ZodEnum) {
     const options = (schema as any).options ?? Object.keys((schema as any).enum ?? {});

@@ -128,13 +128,27 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
         ? 'FLAGGED'
         : 'FAILED';
 
+  // The exact text that would be posted, so we never auto-approve something
+  // LinkedIn will reject. Mirrors the composition in services/linkedin/publish.
+  const composedLength = (
+    draftResult.hashtags.length > 0
+      ? `${draftResult.body}\n\n${draftResult.hashtags
+          .map((h) => (h.startsWith('#') ? h : `#${h}`))
+          .join(' ')}`
+      : draftResult.body
+  ).length;
+
   // Honour the user's approval mode. Only AUTOMATIC may pre-approve a draft,
-  // and even then only one whose fact-check PASSED — a FLAGGED or FAILED post
-  // always goes to the review queue, whatever the mode. APPROVAL_REQUIRED (the
-  // default) and DRAFT_ONLY never machine-approve: the whole app promises
-  // "nothing posts until you approve it," so a pipeline draft must land in
-  // NEEDS_REVIEW and wait for a human, not arrive pre-stamped APPROVED.
-  const autoApprove = user.approvalMode === 'AUTOMATIC' && verificationStatus === 'PASSED';
+  // and even then only one whose fact-check PASSED and that fits LinkedIn's
+  // 3,000-character limit — a FLAGGED/FAILED or over-length post always goes to
+  // the review queue, whatever the mode. APPROVAL_REQUIRED (the default) and
+  // DRAFT_ONLY never machine-approve: the whole app promises "nothing posts
+  // until you approve it," so a pipeline draft must land in NEEDS_REVIEW and
+  // wait for a human, not arrive pre-stamped APPROVED and auto-published.
+  const autoApprove =
+    user.approvalMode === 'AUTOMATIC' &&
+    verificationStatus === 'PASSED' &&
+    composedLength <= 3000;
   const initialStatus = autoApprove ? 'APPROVED' : 'NEEDS_REVIEW';
 
   // Persist ContentDraft
