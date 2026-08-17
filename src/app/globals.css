@@ -1,74 +1,360 @@
 @import 'tailwindcss';
 
 /**
- * Design tokens.
+ * Design system — warm paper.
  *
- * Tailwind v4 takes its theme from CSS, not a JS config file — every custom
- * property declared in `@theme` becomes a utility class (`--color-ink-900`
- * gives you `text-ink-900`, `bg-ink-900`, `border-ink-900`).
+ * A single committed light theme: cream page, deeper cream cards, near-black
+ * ink for the nav and hero surfaces, terracotta for anything actionable. No
+ * dark-mode variant, because the palette *is* the identity here — flipping it
+ * would produce a different product, not a night version of this one.
  *
- * Kept deliberately small. The visual engine (docs/06) has its own palette
- * because rendered PNGs must be deterministic and cannot read the DOM.
+ * Tailwind v4 reads its theme from CSS: every custom property in `@theme`
+ * becomes a utility (`--color-clay-500` → `bg-clay-500`, `text-clay-500`).
+ * The `.card` / `.btn` / `.chip` classes below exist for the handful of
+ * compounds used on nearly every page; everything else uses plain utilities.
  */
+
 @theme {
-  --color-ink-50: oklch(0.98 0.003 260);
-  --color-ink-100: oklch(0.95 0.005 260);
-  --color-ink-200: oklch(0.9 0.008 260);
-  --color-ink-400: oklch(0.68 0.015 260);
-  --color-ink-600: oklch(0.5 0.02 260);
-  --color-ink-800: oklch(0.3 0.02 260);
-  --color-ink-900: oklch(0.21 0.02 260);
-  --color-ink-950: oklch(0.15 0.02 260);
+  /* Paper */
+  --color-cream-50: #fdfaf3;
+  --color-cream-100: #faf4e8;
+  --color-cream-200: #f5ecd9;
+  --color-cream-300: #efe3c9;
+  --color-cream-400: #e7d8b8;
+  --color-cream-500: #dcc9a2;
 
-  --color-accent-400: oklch(0.72 0.13 245);
-  --color-accent-500: oklch(0.62 0.15 245);
-  --color-accent-600: oklch(0.54 0.16 245);
+  /* Ink */
+  --color-ink-500: #6f6553;
+  --color-ink-600: #565042;
+  --color-ink-700: #3b372c;
+  --color-ink-800: #26241c;
+  --color-ink-900: #1a1813;
+  --color-ink-950: #121109;
 
-  --color-signal-ok: oklch(0.68 0.15 150);
-  --color-signal-warn: oklch(0.76 0.15 80);
-  --color-signal-danger: oklch(0.62 0.2 25);
+  /* Terracotta */
+  --color-clay-300: #e2a476;
+  --color-clay-400: #d4813f;
+  --color-clay-500: #c2652b;
+  --color-clay-600: #a9531f;
+  --color-clay-700: #8a4319;
+
+  /* Signals, tuned to sit inside a warm palette */
+  --color-sage-500: #5f7d52;
+  --color-sage-100: #dfe8d7;
+  --color-amber-warn: #b07d21;
+  --color-amber-soft: #f4e6c4;
+  --color-rust-500: #a63d2c;
+  --color-rust-100: #f3d9d3;
 
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    sans-serif;
+    var(--font-display), ui-rounded, 'SF Pro Rounded', 'Avenir Next', 'Segoe UI', system-ui,
+    -apple-system, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+  --radius-card: 1.75rem;
 }
 
 :root {
-  --surface: var(--color-ink-50);
-  --surface-raised: white;
-  --text-primary: var(--color-ink-900);
-  --text-secondary: var(--color-ink-600);
-  --border-subtle: var(--color-ink-200);
+  --page: var(--color-cream-100);
+  --surface: var(--color-cream-200);
+  --surface-raised: var(--color-cream-50);
+  --line: rgb(26 24 19 / 0.09);
+  --line-strong: rgb(26 24 19 / 0.16);
   color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --surface: var(--color-ink-950);
-    --surface-raised: var(--color-ink-900);
-    --text-primary: var(--color-ink-100);
-    --text-secondary: var(--color-ink-400);
-    --border-subtle: var(--color-ink-800);
-    color-scheme: dark;
-  }
 }
 
 html {
   -webkit-text-size-adjust: 100%;
+  background-color: var(--page);
 }
 
 body {
-  background-color: var(--surface);
-  color: var(--text-primary);
+  min-height: 100vh;
+  background-color: var(--page);
+  color: var(--color-ink-900);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Never remove the focus ring — our users include screen-reader and
-   keyboard-only academics, and this app is a professional publishing tool. */
+/* A hairline of ink across the top, as in the reference layout. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: 6px;
+  background: var(--color-ink-900);
+  z-index: 60;
+}
+
+::selection {
+  background: var(--color-clay-300);
+  color: var(--color-ink-950);
+}
+
+/* Never remove the focus ring — this is a professional publishing tool and
+   its users include keyboard-only and screen-reader academics. */
 :focus-visible {
-  outline: 2px solid var(--color-accent-500);
+  outline: 2px solid var(--color-clay-500);
   outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ─────────────────────────────  primitives  ───────────────────────────── */
+
+@layer components {
+  .card {
+    background-color: var(--surface);
+    border-radius: var(--radius-card);
+    padding: 1.75rem;
+  }
+
+  .card-raised {
+    background-color: var(--surface-raised);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+    padding: 1.75rem;
+  }
+
+  .card-ink {
+    background-color: var(--color-ink-900);
+    color: var(--color-cream-100);
+    border-radius: var(--radius-card);
+    padding: 1.75rem;
+  }
+
+  /* Small uppercase eyebrow above a page or section title. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-clay-600);
+  }
+
+  .label {
+    display: block;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-ink-500);
+    margin-bottom: 0.5rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 9999px;
+    padding: 0.6875rem 1.375rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    transition:
+      background-color 0.18s ease,
+      color 0.18s ease,
+      border-color 0.18s ease,
+      transform 0.18s ease;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background-color: var(--color-clay-500);
+    color: var(--color-cream-50);
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--color-clay-600);
+  }
+
+  .btn-ink {
+    background-color: var(--color-ink-900);
+    color: var(--color-cream-100);
+  }
+
+  .btn-ink:hover:not(:disabled) {
+    background-color: var(--color-ink-800);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--color-ink-700);
+    border: 1px solid var(--line-strong);
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    border-color: var(--color-clay-500);
+    color: var(--color-clay-600);
+  }
+
+  .btn-quiet {
+    background-color: var(--color-cream-50);
+    color: var(--color-ink-700);
+    border: 1px solid var(--line);
+  }
+
+  .btn-quiet:hover:not(:disabled) {
+    background-color: white;
+  }
+
+  .btn-sm {
+    padding: 0.4375rem 0.9375rem;
+    font-size: 0.75rem;
+  }
+
+  .input,
+  .select,
+  .textarea {
+    width: 100%;
+    background-color: var(--color-cream-50);
+    border: 1px solid var(--line);
+    border-radius: 1rem;
+    padding: 0.8125rem 1.0625rem;
+    font-size: 0.875rem;
+    font-family: inherit;
+    color: var(--color-ink-900);
+    transition:
+      border-color 0.18s ease,
+      background-color 0.18s ease;
+  }
+
+  .textarea {
+    border-radius: 1.25rem;
+    line-height: 1.65;
+    resize: vertical;
+  }
+
+  .input::placeholder,
+  .textarea::placeholder {
+    color: var(--color-ink-500);
+    opacity: 0.75;
+  }
+
+  .input:focus,
+  .select:focus,
+  .textarea:focus {
+    outline: none;
+    border-color: var(--color-clay-400);
+    background-color: white;
+  }
+
+  .select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6553' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+    background-size: 1rem;
+    padding-right: 2.75rem;
+  }
+
+  /* Tab / filter chip. */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4375rem;
+    border-radius: 9999px;
+    padding: 0.5625rem 1.125rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    border: 1px solid var(--line-strong);
+    color: var(--color-ink-700);
+    transition:
+      background-color 0.18s ease,
+      color 0.18s ease,
+      border-color 0.18s ease;
+  }
+
+  .chip:hover {
+    border-color: var(--color-clay-400);
+  }
+
+  .chip-active {
+    background-color: var(--color-clay-500);
+    border-color: var(--color-clay-500);
+    color: var(--color-cream-50);
+  }
+
+  /* Status pill — lower-contrast, sentence case. */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border-radius: 9999px;
+    padding: 0.25rem 0.6875rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+  }
+
+  .badge-neutral {
+    background-color: var(--color-cream-400);
+    color: var(--color-ink-700);
+  }
+
+  .badge-ok {
+    background-color: var(--color-sage-100);
+    color: var(--color-sage-500);
+  }
+
+  .badge-warn {
+    background-color: var(--color-amber-soft);
+    color: var(--color-amber-warn);
+  }
+
+  .badge-danger {
+    background-color: var(--color-rust-100);
+    color: var(--color-rust-500);
+  }
+
+  .badge-clay {
+    background-color: #f6ddc8;
+    color: var(--color-clay-600);
+  }
+
+  .divider {
+    height: 1px;
+    background-color: var(--line);
+    border: 0;
+  }
+}
+
+/* Scrollbars, kept in-palette so long lists don't sprout a grey rectangle. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-cream-500) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-cream-500);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

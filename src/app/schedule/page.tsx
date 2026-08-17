@@ -1,119 +1,149 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
-import { auth } from '@/lib/auth';
+import { requireSessionUser } from '@/lib/session';
+import {
+  PageShell,
+  PageHeader,
+  TabBar,
+  Card,
+  Badge,
+  EmptyState,
+  humanise,
+  formatDateTime,
+} from '@/components/ui';
+import { SlotEditor } from '@/components/SlotEditor';
+
+export const metadata = { title: 'Schedule — Researchly' };
 
 export default async function SchedulePage() {
-  const session = await auth();
-  const userId = session?.user?.id;
+  const user = await requireSessionUser();
 
-  const [scheduledDrafts, publishedPosts] = userId
-    ? await Promise.all([
-        db.contentDraft.findMany({
-          where: { userId, status: 'SCHEDULED' },
-          include: { paper: { select: { title: true } } },
-          orderBy: { scheduledFor: 'asc' },
-        }),
-        db.publishedPost.findMany({
-          where: { draft: { userId } },
-          include: { draft: { select: { body: true, format: true, paper: { select: { title: true } } } } },
-          orderBy: { publishedAt: 'desc' },
-          take: 10,
-        }),
-      ])
-    : [[], []];
+  const [profile, slots, queued, published] = await Promise.all([
+    db.user.findUniqueOrThrow({ where: { id: user.id }, select: { timezone: true } }),
+    db.scheduleSlot.findMany({
+      where: { userId: user.id, active: true },
+      orderBy: [{ dayOfWeek: 'asc' }, { timeOfDay: 'asc' }],
+      select: { id: true, dayOfWeek: true, timeOfDay: true },
+    }),
+    db.contentDraft.findMany({
+      where: { userId: user.id, status: { in: ['SCHEDULED', 'APPROVED'] } },
+      include: { paper: { select: { title: true } } },
+      orderBy: [{ scheduledFor: 'asc' }, { createdAt: 'desc' }],
+      take: 25,
+    }),
+    // Scoped through the draft's owner — a published post is only ever reachable
+    // via a draft the requesting user owns.
+    db.publishedPost.findMany({
+      where: { draft: { userId: user.id } },
+      include: { draft: { select: { body: true, paper: { select: { title: true } } } } },
+      orderBy: { publishedAt: 'desc' },
+      take: 10,
+    }),
+  ]);
 
   return (
-    <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-white tracking-tight">Publishing Schedule</h1>
-        <p className="text-sm text-slate-400 mt-0.5">
-          Manage upcoming queued posts and review your published LinkedIn posts.
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        eyebrow="Publishing"
+        title="Schedule"
+        description="When approved posts go out, and what has already gone."
+      />
 
-      {/* Upcoming Queued Posts */}
-      <div className="space-y-4">
-        <h2 className="text-base font-bold text-white flex items-center gap-2">
-          <span>🗓️</span> Scheduled Queue ({scheduledDrafts.length})
-        </h2>
+      <TabBar
+        current="/schedule"
+        tabs={[
+          { href: '/settings', label: 'Profile' },
+          { href: '/schedule', label: 'Schedule', count: queued.length },
+          { href: '/sources', label: 'Sources' },
+        ]}
+      />
 
-        {scheduledDrafts.length === 0 ? (
-          <div className="p-8 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/40 text-slate-400 text-xs">
-            No posts currently scheduled. Approve a draft to schedule it for auto-publishing.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-3">
-            {scheduledDrafts.map((draft) => (
-              <div
-                key={draft.id}
-                className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 flex items-center justify-between gap-4"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-indigo-500/20 text-indigo-300">
-                      {draft.format.replace(/_/g, ' ')}
-                    </span>
-                    <span className="text-xs font-semibold text-slate-300">
-                      {draft.scheduledFor ? new Date(draft.scheduledFor).toLocaleString() : 'Pending slot'}
-                    </span>
-                  </div>
-                  <p className="text-sm font-semibold text-white line-clamp-1">{draft.paper.title}</p>
-                </div>
+      <div className="space-y-5">
+        <SlotEditor slots={slots} timezone={profile.timezone} />
 
-                <Link
-                  href={`/drafts/${draft.id}`}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-white transition-all"
-                >
-                  Edit / Reschedule →
+        <Card>
+          <h2 className="mb-4 text-base font-semibold tracking-tight text-ink-900">
+            Queue · {queued.length}
+          </h2>
+
+          {queued.length === 0 ? (
+            <EmptyState
+              title="Nothing queued"
+              description="Approve a draft and it will appear here with its publish time."
+              action={
+                <Link href="/drafts?status=NEEDS_REVIEW" className="btn btn-primary btn-sm">
+                  Review drafts
                 </Link>
-              </div>
-            ))}
-          </div>
-        )}
+              }
+            />
+          ) : (
+            <ul className="space-y-2.5">
+              {queued.map((draft) => (
+                <li
+                  key={draft.id}
+                  className="flex flex-col gap-3 rounded-2xl bg-cream-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <div className="mb-1 flex items-center gap-2">
+                      <Badge tone={draft.status === 'SCHEDULED' ? 'clay' : 'ok'}>
+                        {humanise(draft.status)}
+                      </Badge>
+                      <span className="text-xs text-ink-500">
+                        {draft.scheduledFor ? formatDateTime(draft.scheduledFor) : 'Next free slot'}
+                      </span>
+                    </div>
+                    <p className="truncate text-sm font-medium text-ink-800">
+                      {draft.paper?.title ?? draft.body.slice(0, 90)}
+                    </p>
+                  </div>
+                  <Link href={`/drafts/${draft.id}`} className="btn btn-quiet btn-sm shrink-0">
+                    Open →
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
+        <Card>
+          <h2 className="mb-4 text-base font-semibold tracking-tight text-ink-900">
+            Recently published
+          </h2>
+
+          {published.length === 0 ? (
+            <EmptyState title="Nothing published yet" />
+          ) : (
+            <ul className="space-y-2.5">
+              {published.map((post) => (
+                <li
+                  key={post.id}
+                  className="flex flex-col gap-3 rounded-2xl bg-cream-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-xs text-ink-500">
+                      {post.draft.paper?.title ?? 'Written in chat'}
+                    </p>
+                    <p className="mt-0.5 line-clamp-2 text-sm text-ink-800">{post.draft.body}</p>
+                    <p className="mt-1 text-[0.7rem] text-ink-500">
+                      {formatDateTime(post.publishedAt)}
+                    </p>
+                  </div>
+                  {post.permalink && (
+                    <a
+                      href={post.permalink}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn-quiet btn-sm shrink-0"
+                    >
+                      View ↗
+                    </a>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
       </div>
-
-      {/* Published Post History */}
-      <div className="space-y-4 pt-4 border-t border-slate-800">
-        <h2 className="text-base font-bold text-white flex items-center gap-2">
-          <span>🚀</span> Recently Published
-        </h2>
-
-        {publishedPosts.length === 0 ? (
-          <div className="p-8 text-center rounded-2xl border border-slate-800 bg-slate-900/40 text-slate-400 text-xs">
-            No published posts yet.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-3">
-            {publishedPosts.map((post) => (
-              <div
-                key={post.id}
-                className="p-4 rounded-2xl bg-slate-900/60 border border-slate-800/80 flex items-center justify-between gap-4"
-              >
-                <div className="space-y-1">
-                  <p className="text-xs font-semibold text-slate-400 line-clamp-1">
-                    {post.draft.paper.title}
-                  </p>
-                  <p className="text-xs text-slate-300 line-clamp-2">{post.draft.body}</p>
-                  <p className="text-[11px] text-slate-500">
-                    Published: {post.publishedAt ? new Date(post.publishedAt).toLocaleString() : 'Recently'}
-                  </p>
-                </div>
-
-                {post.permalink && (
-                  <a
-                    href={post.permalink}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600/30 transition-all shrink-0"
-                  >
-                    View on LinkedIn ↗
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    </PageShell>
   );
 }
