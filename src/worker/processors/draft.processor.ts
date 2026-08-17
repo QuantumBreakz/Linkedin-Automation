@@ -9,6 +9,7 @@ import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { eligibleFormats, selectFormat } from '@/services/content/format-gate';
 import { generateDraft } from '@/services/content/draft';
+import { scheduleDraftToNextSlot } from '@/services/scheduling/slots';
 import { verifyDraft } from '@/services/analysis/verify-claims';
 import { openRouterProvider } from '@/services/llm/provider';
 import type { ResearchExtraction } from '@/services/content/types';
@@ -127,7 +128,14 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
         ? 'FLAGGED'
         : 'FAILED';
 
-  const initialStatus = verificationStatus === 'PASSED' ? 'APPROVED' : 'NEEDS_REVIEW';
+  // Honour the user's approval mode. Only AUTOMATIC may pre-approve a draft,
+  // and even then only one whose fact-check PASSED — a FLAGGED or FAILED post
+  // always goes to the review queue, whatever the mode. APPROVAL_REQUIRED (the
+  // default) and DRAFT_ONLY never machine-approve: the whole app promises
+  // "nothing posts until you approve it," so a pipeline draft must land in
+  // NEEDS_REVIEW and wait for a human, not arrive pre-stamped APPROVED.
+  const autoApprove = user.approvalMode === 'AUTOMATIC' && verificationStatus === 'PASSED';
+  const initialStatus = autoApprove ? 'APPROVED' : 'NEEDS_REVIEW';
 
   // Persist ContentDraft
   const createdDraft = await db.contentDraft.create({
@@ -140,6 +148,7 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
       hashtags: draftResult.hashtags,
       linkUrl: draftResult.linkUrl,
       status: initialStatus,
+      ...(autoApprove ? { approvedAt: new Date() } : {}),
       verification: verification as object,
       verificationStatus,
     },
@@ -151,6 +160,23 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
     verdict: verification.verdict,
     status: initialStatus,
   });
+
+  // AUTOMATIC means "go out on my schedule without a second look" (the exact
+  // promise the settings screen makes). Assign the approved draft to the next
+  // open slot; the schedule sweeper publishes it when that time arrives. If
+  // slot assignment fails, the draft simply stays APPROVED for manual handling
+  // rather than being lost.
+  if (autoApprove) {
+    try {
+      const scheduledFor = await scheduleDraftToNextSlot(createdDraft.id, userId);
+      logger.info('Auto-approved draft scheduled', { draftId: createdDraft.id, scheduledFor });
+    } catch (err) {
+      logger.error('Could not auto-schedule an approved draft; left APPROVED', {
+        draftId: createdDraft.id,
+        err,
+      });
+    }
+  }
 
   // Stage 5: Visual Card generation if appropriate (e.g. VISUAL_EXPLAINER or numbers present)
   if (extraction.importantNumbers && extraction.importantNumbers.length > 0) {

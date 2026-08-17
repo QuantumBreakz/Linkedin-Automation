@@ -81,6 +81,11 @@ export async function POST(
 
     if (mode === 'schedule' && scheduledDate) {
       try {
+        // Rescheduling reuses the same jobId, and BullMQ silently ignores an
+        // add() whose jobId already exists — so without removing the previous
+        // job first, a re-scheduled post would keep firing at its *old* time
+        // while the UI showed the new one. Remove, then add the fresh delay.
+        await postPublishQueue.remove(`publish-${draft.id}`).catch(() => {});
         await postPublishQueue.add(
           `publish-${draft.id}`,
           { draftId: draft.id, userId },
@@ -88,7 +93,8 @@ export async function POST(
         );
       } catch (err) {
         // Redis down should not silently swallow a scheduled post. The draft
-        // stays SCHEDULED and the schedule sweeper picks it up.
+        // stays SCHEDULED and the schedule sweeper (schedule.sweep, every
+        // minute) publishes it once its time passes.
         logger.error('Could not enqueue scheduled publish', { draftId: draft.id, err });
         return NextResponse.json(
           {

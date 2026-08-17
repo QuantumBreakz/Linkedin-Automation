@@ -9,12 +9,13 @@ import { Worker } from 'bullmq';
 import { createRedisConnection, closeRedis } from '@/lib/redis';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
-import { QUEUE_NAMES, sourcesPollQueue, tokenWatchQueue } from './queues';
+import { QUEUE_NAMES, sourcesPollQueue, tokenWatchQueue, scheduleSweepQueue } from './queues';
 import { processAnalyzeJob } from './processors/analyze.processor';
 import { processDraftJob } from './processors/draft.processor';
 import { processPublishJob } from './processors/publish.processor';
 import { processPollJob } from './processors/poll.processor';
 import { processTokenWatchJob } from './processors/token-watch.processor';
+import { processScheduleSweepJob } from './processors/schedule-sweep.processor';
 
 // ─────────────────────  Worker Setup  ────────────────────────────────
 
@@ -37,6 +38,12 @@ const workers: Worker[] = [
   }),
   new Worker(QUEUE_NAMES.TOKEN_WATCH, processTokenWatchJob, {
     connection: createRedisConnection({ label: 'worker-token-watch' }),
+    concurrency: 1,
+  }),
+  // Single instance, no concurrency: the sweep is a serial reconciliation pass
+  // and its own claims already guard against a second one overlapping.
+  new Worker(QUEUE_NAMES.SCHEDULE_SWEEP, processScheduleSweepJob, {
+    connection: createRedisConnection({ label: 'worker-schedule-sweep' }),
     concurrency: 1,
   }),
 ];
@@ -64,7 +71,14 @@ async function scheduleCronJobs(): Promise<void> {
     every: 6 * 60 * 60 * 1000,
   });
 
-  logger.info('Registered repeatable cron jobs (sources poll & token watch)');
+  // Schedule sweep: every minute. Publishes due drafts and recovers crashed
+  // publish locks. This is what makes a `scheduledFor` a promise rather than a
+  // hope pinned on one delayed job surviving.
+  await scheduleSweepQueue.upsertJobScheduler('schedule-sweep', {
+    every: 60 * 1000,
+  });
+
+  logger.info('Registered repeatable cron jobs (sources poll, token watch & schedule sweep)');
 }
 
 // ─────────────────────  Lifecycle  ───────────────────────────────────

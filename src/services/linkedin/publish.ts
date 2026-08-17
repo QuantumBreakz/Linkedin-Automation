@@ -29,6 +29,7 @@ export type PublishFailureReason =
   | 'draft_not_found'
   | 'not_approved'
   | 'no_linkedin_account'
+  | 'in_progress'
   | 'linkedin_error';
 
 export type PublishOutcome =
@@ -42,8 +43,18 @@ export type PublishOutcome =
     }
   | { ok: false; reason: PublishFailureReason; message: string };
 
-/** Statuses from which publishing is legitimate. */
-const PUBLISHABLE = new Set(['APPROVED', 'SCHEDULED', 'PUBLISHING']);
+/**
+ * Statuses from which publishing is legitimate.
+ *
+ * FAILED is included so a transient failure can be re-driven: BullMQ's own
+ * retries (attempts: 3) land on a draft whose catch block set it to FAILED, and
+ * a user can retry a failed post. This is safe because the atomic claim below,
+ * plus the deterministic idempotency key, make a second successful post
+ * impossible. PUBLISHING is here so an in-flight draft reads as "legitimately
+ * publishing" — the claim then declines it (a live lock is left alone; a
+ * crashed one is swept back to FAILED).
+ */
+const PUBLISHABLE = new Set(['APPROVED', 'SCHEDULED', 'PUBLISHING', 'FAILED']);
 
 export async function publishDraft(args: {
   draftId: string;
@@ -93,11 +104,43 @@ export async function publishDraft(args: {
     };
   }
 
-  // PUBLISHING is a lock as much as a status: a second call landing while the
-  // first is in flight sees a status that is not in PUBLISHABLE... except that
-  // it is, deliberately, so a crashed run can be retried. The real duplicate
-  // guard is the idempotency key, which LinkedIn dedupes on.
-  await db.contentDraft.update({ where: { id: draftId }, data: { status: 'PUBLISHING' } });
+  // Atomically claim the draft for publishing. This single conditional write is
+  // the duplicate guard: three callers race for the same draft — the Approve
+  // button, the per-draft delayed job, and the schedule sweeper — and exactly
+  // one can move it out of a claimable state into PUBLISHING. The losers get
+  // count === 0 and back off below, so a post is never sent twice.
+  //
+  // FAILED is claimable so a BullMQ retry (which lands on a draft its own catch
+  // block set to FAILED) can re-drive it. PUBLISHING is deliberately *not*
+  // claimable here — a live lock is left alone; a crashed one is swept back to
+  // FAILED by the schedule sweeper after a grace period.
+  const claim = await db.contentDraft.updateMany({
+    where: { id: draftId, userId, status: { in: ['APPROVED', 'SCHEDULED', 'FAILED'] } },
+    data: { status: 'PUBLISHING' },
+  });
+
+  if (claim.count === 0) {
+    const fresh = await db.contentDraft.findFirst({
+      where: { id: draftId, userId },
+      select: { status: true },
+    });
+    if (fresh?.status === 'PUBLISHED') {
+      const existing = await db.publishedPost.findUnique({ where: { draftId } });
+      return {
+        ok: true,
+        alreadyPublished: true,
+        urn: existing?.linkedinUrn ?? null,
+        permalink: existing?.permalink ?? null,
+        dryRun: existing?.apiSurface === 'dry-run',
+      };
+    }
+    // Someone else holds the lock right now. Not an error — just not ours.
+    return {
+      ok: false,
+      reason: 'in_progress',
+      message: 'This draft is already being published.',
+    };
+  }
 
   const accessToken = decryptAccessToken(account.accessTokenEnc);
   const idempotencyKey = publishIdempotencyKey(draft.id);

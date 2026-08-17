@@ -6,6 +6,7 @@
  */
 
 import { addDays, setHours, setMinutes, isAfter, startOfDay } from 'date-fns';
+import { fromZonedTime, toZonedTime } from 'date-fns-tz';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 
@@ -45,6 +46,15 @@ export async function findNextAvailableSlot(
     return null;
   }
 
+  // A slot's `dayOfWeek`/`timeOfDay` is wall-clock in the *user's* timezone, so
+  // "Monday 09:00" fires at 09:00 where they are, not on the server. We iterate
+  // days in that zone, build each candidate as a zone-local wall clock, then map
+  // it back to the real UTC instant with `fromZonedTime`. Pairing
+  // `toZonedTime` with `fromZonedTime` makes the arithmetic correct regardless
+  // of the server's own timezone, and handles DST at the boundary.
+  const timeZone = user?.timezone || 'UTC';
+  const zonedNow = toZonedTime(fromDate, timeZone);
+
   const occupiedTimes = new Set(
     existingScheduled
       .map((d) => d.scheduledFor?.getTime())
@@ -53,8 +63,8 @@ export async function findNextAvailableSlot(
 
   // Search forward up to 4 weeks (28 days) for the next free slot
   for (let dayOffset = 0; dayOffset < 28; dayOffset++) {
-    const candidateDay = addDays(fromDate, dayOffset);
-    const dayOfWeek = candidateDay.getDay(); // 0 = Sunday
+    const candidateDay = addDays(zonedNow, dayOffset);
+    const dayOfWeek = candidateDay.getDay(); // 0 = Sunday, in the user's zone
 
     const matchingSlots = slots.filter((s) => s.dayOfWeek === dayOfWeek);
 
@@ -63,9 +73,11 @@ export async function findNextAvailableSlot(
       const hour = Number(hourStr ?? 9);
       const minute = Number(minStr ?? 0);
 
-      let slotDate = startOfDay(candidateDay);
-      slotDate = setHours(slotDate, hour);
-      slotDate = setMinutes(slotDate, minute);
+      // Build the wall clock in the user's zone, then resolve it to a real instant.
+      let wallClock = startOfDay(candidateDay);
+      wallClock = setHours(wallClock, hour);
+      wallClock = setMinutes(wallClock, minute);
+      const slotDate = fromZonedTime(wallClock, timeZone);
 
       // Must be in the future
       if (isAfter(slotDate, fromDate)) {

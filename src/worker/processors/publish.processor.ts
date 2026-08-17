@@ -17,7 +17,7 @@ export interface PublishJobData {
 }
 
 /** Outcomes where retrying cannot help — a retry would just burn attempts. */
-const TERMINAL = new Set(['draft_not_found', 'not_approved', 'no_linkedin_account']);
+const TERMINAL = new Set(['draft_not_found', 'not_approved', 'no_linkedin_account', 'in_progress']);
 
 export async function processPublishJob(job: Job<PublishJobData>): Promise<void> {
   const { draftId, userId } = job.data;

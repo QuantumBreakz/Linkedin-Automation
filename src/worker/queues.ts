@@ -18,6 +18,14 @@ export const QUEUE_NAMES = {
   POST_PUBLISH: 'post.publish',
   TOKEN_WATCH: 'token.watch',
   SOURCES_POLL: 'sources.poll',
+  /**
+   * Reconciliation sweep for scheduled posts. The safety net behind every
+   * `scheduledFor`: it publishes drafts whose time has passed even if the
+   * per-draft delayed job was never enqueued (Redis was down when the user
+   * scheduled) or was lost (evicted, crashed). Without it a SCHEDULED draft
+   * that misses its one delayed job would never publish.
+   */
+  SCHEDULE_SWEEP: 'schedule.sweep',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -56,4 +64,5 @@ export const draftVerifyQueue = createQueue(QUEUE_NAMES.DRAFT_VERIFY);
 export const postPublishQueue = createQueue(QUEUE_NAMES.POST_PUBLISH);
 export const tokenWatchQueue = createQueue(QUEUE_NAMES.TOKEN_WATCH);
 export const sourcesPollQueue = createQueue(QUEUE_NAMES.SOURCES_POLL);
+export const scheduleSweepQueue = createQueue(QUEUE_NAMES.SCHEDULE_SWEEP);
 
