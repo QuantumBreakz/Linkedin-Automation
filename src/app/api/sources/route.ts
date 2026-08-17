@@ -1,78 +1,63 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { withUser, badRequest } from '@/lib/session';
 import { getAdapter } from '@/services/sources/adapter';
 import { sourcesPollQueue } from '@/worker/queues';
+import { logger } from '@/lib/logger';
 import type { SourceKind } from '@prisma/client';
 
 // Ensure adapters are registered
 import '@/services/sources/adapters';
 
 export async function GET(): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  const sources = await db.researchSource.findMany({
-    where: { userId: session.user.id },
-    include: {
-      _count: {
-        select: { links: true },
-      },
-    },
-    orderBy: { createdAt: 'desc' },
+  return withUser(async (userId) => {
+    const sources = await db.researchSource.findMany({
+      where: { userId },
+      include: { _count: { select: { links: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return NextResponse.json({ sources });
   });
-
-  return NextResponse.json({ sources });
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const body = (await req.json().catch(() => ({}))) as {
+      kind?: SourceKind;
+      identifier?: string;
+      label?: string;
+    };
+    const { kind, identifier, label } = body;
 
-  const body = await req.json();
-  const { kind, identifier, label } = body as { kind: SourceKind; identifier: string; label?: string };
+    if (!kind || !identifier) return badRequest('kind and identifier are required');
 
-  if (!kind || !identifier) {
-    return NextResponse.json({ error: 'kind and identifier are required' }, { status: 400 });
-  }
+    // getAdapter throws for an unregistered kind, so an unsupported value has
+    // to be caught here to stay a 400 rather than surfacing as a 500.
+    let adapter;
+    try {
+      adapter = getAdapter(kind);
+    } catch {
+      return badRequest(`Unsupported source kind: ${kind}`);
+    }
 
-  // getAdapter throws for an unregistered kind, so an unsupported value has to
-  // be caught here to stay a 400 rather than surfacing as a 500.
-  let adapter;
-  try {
-    adapter = getAdapter(kind);
-  } catch {
-    return NextResponse.json({ error: `Unsupported source kind: ${kind}` }, { status: 400 });
-  }
+    try {
+      await adapter.validate(identifier, {});
+    } catch (err) {
+      return badRequest(err instanceof Error ? err.message : 'Source validation failed');
+    }
 
-  // Validate with adapter
-  try {
-    await adapter.validate(identifier, {});
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Source validation failed' },
-      { status: 400 },
-    );
-  }
+    const source = await db.researchSource.create({
+      data: { userId, kind, identifier, label: label || null, syncStatus: 'PENDING' },
+    });
 
-  const source = await db.researchSource.create({
-    data: {
-      userId: session.user.id,
-      kind,
-      identifier,
-      label: label || null,
-      syncStatus: 'PENDING',
-    },
+    // The source is saved either way; a queue that is down delays discovery
+    // rather than losing the connection the user just made.
+    try {
+      await sourcesPollQueue.add(`initial-poll-${source.id}`, { sourceId: source.id });
+    } catch (err) {
+      logger.warn('Could not enqueue the initial source poll', { sourceId: source.id, err });
+    }
+
+    return NextResponse.json({ source }, { status: 201 });
   });
-
-  // Trigger initial poll immediately
-  await sourcesPollQueue.add(`initial-poll-${source.id}`, {
-    sourceId: source.id,
-  });
-
-  return NextResponse.json({ source }, { status: 201 });
 }

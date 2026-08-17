@@ -1,42 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { DraftStatus } from '@prisma/client';
 import { db } from '@/lib/db';
-import type { DraftStatus } from '@prisma/client';
+import { withUser } from '@/lib/session';
+
+const STATUSES = new Set(Object.values(DraftStatus) as string[]);
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const raw = new URL(req.url).searchParams.get('status');
+    // Only a known enum value reaches the query.
+    const status = raw && STATUSES.has(raw) ? (raw as DraftStatus) : undefined;
 
-  const { searchParams } = new URL(req.url);
-  const status = searchParams.get('status') as DraftStatus | null;
-
-  const drafts = await db.contentDraft.findMany({
-    where: {
-      userId: session.user.id,
-      ...(status ? { status } : {}),
-    },
-    include: {
-      paper: {
-        select: {
-          id: true,
-          title: true,
-          venue: true,
-          landingUrl: true,
-          doi: true,
-          authors: { take: 3 },
+    const drafts = await db.contentDraft.findMany({
+      where: { userId, ...(status ? { status } : {}) },
+      include: {
+        paper: {
+          select: {
+            id: true,
+            title: true,
+            venue: true,
+            landingUrl: true,
+            doi: true,
+            authors: { take: 3 },
+          },
         },
+        visuals: { where: { isPrimary: true }, take: 1 },
+        published: true,
       },
-      visuals: {
-        where: { isPrimary: true },
-        take: 1,
-      },
-      published: true,
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 50,
-  });
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
 
-  return NextResponse.json({ drafts });
+    return NextResponse.json({ drafts });
+  });
 }

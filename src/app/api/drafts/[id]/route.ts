@@ -1,102 +1,117 @@
+/**
+ * One draft: read, edit, or hand to the publisher.
+ *
+ * `PATCH` deliberately cannot set every status. Publishing is a side effect,
+ * not a field — letting a client PATCH `status: "PUBLISHED"` would let it mark
+ * a post as live without anything ever being sent, and letting it PATCH
+ * `APPROVED` would route around the approval endpoint that records *when* and
+ * *what* was approved. Both go through /approve instead.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
-import { auth } from '@/lib/auth';
+import { z } from 'zod';
 import { db } from '@/lib/db';
-import { postPublishQueue } from '@/worker/queues';
+import { withUser, notFound, badRequest } from '@/lib/session';
+import { publishDraft } from '@/services/linkedin/publish';
+
+/** Statuses a client may set directly. Everything else is server-driven. */
+const EditableStatus = z.enum(['NEEDS_REVIEW', 'CANCELLED']);
+
+const PatchSchema = z.object({
+  body: z.string().trim().min(1).max(6000).optional(),
+  hashtags: z.array(z.string().trim().max(60)).max(15).optional(),
+  status: EditableStatus.optional(),
+});
 
 export async function GET(
   _req: NextRequest,
   props: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const { id } = await props.params;
 
-  const { id } = await props.params;
-
-  const draft = await db.contentDraft.findFirst({
-    where: { id, userId: session.user.id },
-    include: {
-      paper: {
-        include: {
-          authors: { orderBy: { position: 'asc' } },
-        },
+    const draft = await db.contentDraft.findFirst({
+      where: { id, userId },
+      include: {
+        paper: { include: { authors: { orderBy: { position: 'asc' } } } },
+        analysis: true,
+        visuals: true,
+        published: true,
       },
-      analysis: true,
-      visuals: true,
-      published: true,
-    },
+    });
+
+    if (!draft) return notFound('Draft');
+    return NextResponse.json({ draft });
   });
-
-  if (!draft) {
-    return NextResponse.json({ error: 'Draft not found' }, { status: 404 });
-  }
-
-  return NextResponse.json({ draft });
 }
 
 export async function PATCH(
   req: NextRequest,
   props: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const { id } = await props.params;
 
-  const { id } = await props.params;
-  const body = await req.json();
+    const parsed = PatchSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+      return badRequest(parsed.error.issues[0]?.message ?? 'Invalid draft update.');
+    }
+    const { body, hashtags, status } = parsed.data;
 
-  const draft = await db.contentDraft.findFirst({
-    where: { id, userId: session.user.id },
+    const draft = await db.contentDraft.findFirst({
+      where: { id, userId },
+      select: { id: true, status: true },
+    });
+    if (!draft) return notFound('Draft');
+
+    if (draft.status === 'PUBLISHED') {
+      return badRequest('A published post cannot be edited here.');
+    }
+
+    const updated = await db.contentDraft.update({
+      where: { id: draft.id },
+      data: {
+        ...(body !== undefined ? { body, editedByUser: true } : {}),
+        ...(hashtags !== undefined ? { hashtags } : {}),
+        ...(status !== undefined ? { status } : {}),
+      },
+    });
+
+    return NextResponse.json({ draft: updated });
   });
-
-  if (!draft) {
-    return NextResponse.json({ error: 'Draft not found' }, { status: 404 });
-  }
-
-  const updated = await db.contentDraft.update({
-    where: { id },
-    data: {
-      ...(body.body ? { body: body.body, editedByUser: true } : {}),
-      ...(body.hashtags ? { hashtags: body.hashtags } : {}),
-      ...(body.status ? { status: body.status } : {}),
-      ...(body.scheduledFor ? { scheduledFor: new Date(body.scheduledFor) } : {}),
-      ...(body.status === 'APPROVED' ? { approvedAt: new Date() } : {}),
-    },
-  });
-
-  return NextResponse.json({ draft: updated });
 }
 
+/**
+ * Publishes an already-approved draft.
+ *
+ * Kept for the "approve now, publish later" path. It will not publish
+ * something the user has not approved — that check lives in `publishDraft`.
+ */
 export async function POST(
   req: NextRequest,
   props: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  return withUser(async (userId) => {
+    const { id } = await props.params;
+    const { action } = (await req.json().catch(() => ({ action: 'publish' }))) as {
+      action?: string;
+    };
 
-  const { id } = await props.params;
-  const { action } = await req.json().catch(() => ({ action: 'publish' }));
+    if (action !== 'publish') return badRequest(`Unknown action: ${action}`);
 
-  const draft = await db.contentDraft.findFirst({
-    where: { id, userId: session.user.id },
-  });
+    const outcome = await publishDraft({ draftId: id, userId });
 
-  if (!draft) {
-    return NextResponse.json({ error: 'Draft not found' }, { status: 404 });
-  }
+    if (!outcome.ok) {
+      return NextResponse.json(
+        { error: outcome.message, reason: outcome.reason },
+        { status: outcome.reason === 'draft_not_found' ? 404 : 400 },
+      );
+    }
 
-  if (action === 'publish') {
-    await postPublishQueue.add(`publish-${draft.id}`, {
-      draftId: draft.id,
-      userId: session.user.id,
+    return NextResponse.json({
+      success: true,
+      permalink: outcome.permalink,
+      message: outcome.alreadyPublished ? 'Already published.' : 'Published to LinkedIn.',
     });
-
-    return NextResponse.json({ success: true, message: 'Publish job queued' });
-  }
-
-  return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
+  });
 }
