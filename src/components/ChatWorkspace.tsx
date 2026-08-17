@@ -5,9 +5,11 @@
  * thread at a time.
  *
  * Everything it renders comes from `/api/chat/*`, which only ever returns the
- * signed-in user's rows. The one piece of local state that outlives a reload —
- * which tabs are open — is namespaced by user id, so signing in as someone
- * else on the same browser cannot surface the previous person's thread titles.
+ * signed-in user's rows. Which tabs are open — the one piece of state that
+ * outlives a reload — is persisted server-side via `/api/chat/tabs` (keyed by
+ * the session user), so the workspace follows the account across devices and a
+ * shared browser cannot surface the previous person's threads. Saved state is
+ * always filtered to the caller's own live conversations on load.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,10 +40,6 @@ const STARTERS = [
   'What angle would make this finding interesting to clinicians?',
 ];
 
-function tabsKey(userId: string): string {
-  return `researchly:chat-tabs:${userId}`;
-}
-
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const minutes = Math.round(diff / 60_000);
@@ -52,7 +50,7 @@ function relativeTime(iso: string): string {
   return `${Math.round(hours / 24)}d`;
 }
 
-export function ChatWorkspace({ userId, userName }: { userId: string; userName: string }) {
+export function ChatWorkspace({ userName }: { userName: string }) {
   const router = useRouter();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -69,6 +67,9 @@ export function ChatWorkspace({ userId, userName }: { userId: string; userName: 
   const threadRef = useRef<HTMLDivElement>(null);
   /** Counter for optimistic message keys — no clock needed, and never collides. */
   const pendingSeq = useRef(0);
+  /** Gate the tab-persistence effect until the server state has been restored,
+   *  so the initial empty render never overwrites what was saved. */
+  const hydrated = useRef(false);
 
   // ────────────────────────────  loading  ────────────────────────────
 
@@ -78,6 +79,16 @@ export function ChatWorkspace({ userId, userName }: { userId: string; userName: 
     const data = (await res.json()) as { conversations: Conversation[] };
     setConversations(data.conversations);
     return data.conversations;
+  }, []);
+
+  const loadTabs = useCallback(async (): Promise<{ openIds: string[]; activeId: string | null }> => {
+    try {
+      const res = await fetch('/api/chat/tabs');
+      if (!res.ok) return { openIds: [], activeId: null };
+      return (await res.json()) as { openIds: string[]; activeId: string | null };
+    } catch {
+      return { openIds: [], activeId: null };
+    }
   }, []);
 
   const openThread = useCallback(async (id: string) => {
@@ -123,42 +134,52 @@ export function ChatWorkspace({ userId, userName }: { userId: string; userName: 
     setActiveId(data.conversation.id);
   }, [addTab]);
 
-  // Restore the previous session's tabs, then open the most recent thread.
+  // Restore the previous session's tabs from the server, then open the thread
+  // that was focused last (falling back to the most recent).
   useEffect(() => {
     let cancelled = false;
 
     void (async () => {
-      const list = await loadConversations();
+      const [list, saved] = await Promise.all([loadConversations(), loadTabs()]);
       if (cancelled) return;
 
+      // Only keep ids that still belong to a live conversation — this both
+      // drops deleted threads and guarantees a stale/foreign id is never shown.
       const alive = new Set(list.map((c) => c.id));
-      let restored: string[] = [];
-      try {
-        const raw = window.localStorage.getItem(tabsKey(userId));
-        if (raw) restored = (JSON.parse(raw) as string[]).filter((id) => alive.has(id));
-      } catch {
-        restored = [];
-      }
+      const restored = saved.openIds.filter((id) => alive.has(id));
+      const openList = restored.length > 0 ? restored : list[0] ? [list[0].id] : [];
 
-      const first = restored[0] ?? list[0]?.id;
-      if (first) {
-        setOpenTabs(restored.length > 0 ? restored : [first]);
-        void openThread(first);
-      }
+      const savedActive =
+        saved.activeId && openList.includes(saved.activeId) ? saved.activeId : null;
+      const active = savedActive ?? openList[0] ?? null;
+
+      setOpenTabs(openList);
+      if (active) void openThread(active);
+
+      // From here on, tab changes are the user's, so it is safe to persist.
+      hydrated.current = true;
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [userId, loadConversations, openThread]);
+  }, [loadConversations, loadTabs, openThread]);
 
+  // Persist tab state server-side, debounced so rapid open/close/switch bursts
+  // collapse into one write. Skipped until the initial restore has run.
   useEffect(() => {
-    try {
-      window.localStorage.setItem(tabsKey(userId), JSON.stringify(openTabs));
-    } catch {
-      // Private browsing with storage disabled — tabs just won't persist.
-    }
-  }, [openTabs, userId]);
+    if (!hydrated.current) return;
+    const handle = setTimeout(() => {
+      void fetch('/api/chat/tabs', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ openIds: openTabs, activeId }),
+      }).catch(() => {
+        // A failed save is non-fatal — the tabs still work this session.
+      });
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [openTabs, activeId]);
 
   // Pin to the newest message. The rAF matters: on a thread that has just been
   // swapped in, layout has not settled when the effect runs, so scrollHeight is

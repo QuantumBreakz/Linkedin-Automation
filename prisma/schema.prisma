@@ -46,6 +46,10 @@ model User {
   orcidVerified  Boolean      @default(false)
   approvalMode   ApprovalMode @default(APPROVAL_REQUIRED)
   lastLoginAt    DateTime?
+  /// Chat workspace UI state — which conversation tabs are open and which is
+  /// active. Server-side (not browser localStorage) so it follows the user
+  /// across devices. Shape: { openIds: string[], activeId: string | null }.
+  chatTabs       Json         @default("{}")
   createdAt      DateTime     @default(now())
 
   brandProfile    BrandProfile?

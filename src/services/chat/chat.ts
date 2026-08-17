@@ -129,6 +129,42 @@ export async function listMessages(userId: string, conversationId: string) {
   });
 }
 
+// ──────────────────────────  workspace tab state  ────────────────────────
+
+export interface ChatTabsState {
+  /** Conversation ids with an open tab, in tab order. */
+  openIds: string[];
+  /** The focused tab, or null when nothing is open. */
+  activeId: string | null;
+}
+
+/**
+ * The user's persisted chat-tab state — which threads are open and which one is
+ * focused. Lives on the User row (not browser localStorage) so it follows the
+ * account across devices. Tolerates the legacy/empty `{}` default.
+ */
+export async function getChatTabs(userId: string): Promise<ChatTabsState> {
+  const row = await db.user.findUnique({ where: { id: userId }, select: { chatTabs: true } });
+  const raw = (row?.chatTabs ?? {}) as { openIds?: unknown; activeId?: unknown };
+  const openIds = Array.isArray(raw.openIds)
+    ? raw.openIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  const activeId = typeof raw.activeId === 'string' ? raw.activeId : null;
+  return { openIds, activeId };
+}
+
+/**
+ * Persists the chat-tab state. The ids are opaque UI state and are never
+ * rendered for anyone else — the workspace filters them to the caller's own
+ * live conversations on load — so no ownership check is needed on write.
+ */
+export async function setChatTabs(userId: string, state: ChatTabsState): Promise<void> {
+  await db.user.update({
+    where: { id: userId },
+    data: { chatTabs: { openIds: state.openIds, activeId: state.activeId } },
+  });
+}
+
 // ────────────────────────────  sending a turn  ───────────────────────────
 
 export interface SendResult {

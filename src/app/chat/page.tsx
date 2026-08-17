@@ -13,7 +13,7 @@ export default async function ChatPage() {
         eyebrow="Writing room"
         description="Threads are private to your account. Save any reply as a post draft — it still has to pass the approval screen before it goes out."
       />
-      <ChatWorkspace userId={user.id} userName={firstName(user.name) || 'there'} />
+      <ChatWorkspace userName={firstName(user.name) || 'there'} />
     </PageShell>
   );
 }
