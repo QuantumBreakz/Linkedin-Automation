@@ -1,5 +1,7 @@
 node_modules/
 .next/
+# NEXT_DIST_DIR override, for building while a dev server is running
+.next-build/
 out/
 dist/
 build/
