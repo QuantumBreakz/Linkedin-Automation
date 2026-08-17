@@ -89,6 +89,7 @@ export async function listConversations(userId: string, includeArchived = false)
       lastMessageAt: true,
       createdAt: true,
       messages: {
+        where: { role: 'ASSISTANT' },
         orderBy: { createdAt: 'desc' },
         take: 1,
         select: { content: true, role: true },
@@ -131,8 +132,8 @@ export async function listMessages(userId: string, conversationId: string) {
 // ────────────────────────────  sending a turn  ───────────────────────────
 
 export interface SendResult {
-  userMessage: Pick<ChatMessage, 'id' | 'role' | 'content' | 'createdAt'>;
-  assistantMessage: Pick<ChatMessage, 'id' | 'role' | 'content' | 'createdAt'>;
+  userMessage: Pick<ChatMessage, 'id' | 'role' | 'content' | 'createdAt' | 'draftId'>;
+  assistantMessage: Pick<ChatMessage, 'id' | 'role' | 'content' | 'createdAt' | 'draftId'>;
   conversationTitle: string;
 }
 
@@ -171,7 +172,7 @@ export async function sendMessage(args: {
 
   const userMessage = await db.chatMessage.create({
     data: { conversationId, userId, role: 'USER', content },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: { id: true, role: true, content: true, createdAt: true, draftId: true },
   });
 
   const messages: Message[] = [
@@ -206,7 +207,7 @@ export async function sendMessage(args: {
 
   const assistantMessage = await db.chatMessage.create({
     data: { conversationId, userId, role: 'ASSISTANT', content: reply, meta: meta as object },
-    select: { id: true, role: true, content: true, createdAt: true },
+    select: { id: true, role: true, content: true, createdAt: true, draftId: true },
   });
 
   // First exchange names the thread, the way a chat sidebar is expected to

@@ -17,9 +17,12 @@ import {
 const FILTERS: Array<{ label: string; value?: DraftStatus }> = [
   { label: 'All' },
   { label: 'Needs review', value: 'NEEDS_REVIEW' },
+  { label: 'Generated', value: 'GENERATED' },
   { label: 'Approved', value: 'APPROVED' },
   { label: 'Scheduled', value: 'SCHEDULED' },
   { label: 'Published', value: 'PUBLISHED' },
+  { label: 'Failed', value: 'FAILED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
 ];
 
 const VALID = new Set(FILTERS.map((f) => f.value).filter(Boolean) as string[]);

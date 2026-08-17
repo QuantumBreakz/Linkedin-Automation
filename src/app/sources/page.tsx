@@ -66,7 +66,7 @@ export default async function SourcesPage() {
 
               <div className="shrink-0 text-left text-xs text-ink-500 sm:text-right">
                 <p className="font-semibold text-ink-800">{source._count.links} papers linked</p>
-                <p>Last checked {formatDateTime(source.lastCheckedAt)}</p>
+                <p>{source.lastCheckedAt ? `Last checked ${formatDateTime(source.lastCheckedAt)}` : 'Pending first check'}</p>
               </div>
             </Card>
           ))}

@@ -73,7 +73,7 @@ export function DraftApproval({
 
   const composedLength = composePostText(body, hashtags).length;
   const tooLong = composedLength > MAX_LENGTH;
-  const published = status === 'PUBLISHED';
+  const published = status === 'PUBLISHED' || status === 'CANCELLED';
   const dirty = body !== draft.body || hashtags.join(' ') !== draft.hashtags.join(' ');
 
   async function save() {
@@ -120,6 +120,8 @@ export function DraftApproval({
 
       if (!res.ok) {
         setNotice({ tone: 'error', text: data.error ?? 'That did not go through.' });
+        if (data.status) setStatus(data.status);
+        router.refresh();
         return;
       }
 

@@ -34,7 +34,8 @@ export function TopNav({
     { href: '/inbox', label: 'Research', match: ['/sources'] },
     { href: '/drafts', label: 'Drafts', count: reviewCount },
     { href: '/chat', label: 'Chat' },
-    { href: '/settings', label: 'Profile', match: ['/schedule'] },
+    { href: '/schedule', label: 'Schedule' },
+    { href: '/settings', label: 'Profile' },
   ];
 
   function isActive(item: NavItem): boolean {
