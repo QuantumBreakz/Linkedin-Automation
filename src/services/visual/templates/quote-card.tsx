@@ -4,6 +4,7 @@
 
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
+import { CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize } from '../layout';
 
 type QuoteCardSpec = Extract<VisualSpec, { template: 'QUOTE_CARD' }>;
 
@@ -14,8 +15,21 @@ const DEFAULTS = {
   accent: '#22D3EE',
 };
 
+const QUOTE_LADDER = [44, 40, 36, 33, 30, 27] as const;
+/** Height left for the quote once the mark, rule, attribution and source are placed. */
+const QUOTE_BUDGET = 560;
+
 export function QuoteCard(spec: QuoteCardSpec) {
   const theme = { ...DEFAULTS, ...spec.theme };
+
+  const quoteSize = fitFontSize(
+    spec.quote,
+    CONTENT_WIDTH,
+    QUOTE_BUDGET,
+    QUOTE_LADDER,
+    1.4,
+    CHAR_WIDTH_RATIO.DISPLAY,
+  );
 
   return React.createElement(
     'div',
@@ -62,11 +76,10 @@ export function QuoteCard(spec: QuoteCardSpec) {
       'div',
       {
         style: {
-          fontSize: '44px',
+          fontSize: `${quoteSize}px`,
           fontWeight: 600,
           color: theme.text,
           lineHeight: 1.4,
-          maxWidth: '960px',
           marginBottom: '40px',
         },
       },

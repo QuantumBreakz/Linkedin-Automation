@@ -118,6 +118,50 @@ describe('visual/select', () => {
     }
   });
 
+  it('builds PROBLEM_SOLUTION when both halves are present', () => {
+    const spec = selectVisualSpec(
+      {
+        suggestedVisuals: ['PROBLEM_SOLUTION'],
+        problem: stated('Long clinical notes overflow the context window'),
+        novelty: stated('A sparse attention scheme that keeps recall at 100k tokens'),
+      },
+      paper,
+    );
+    expect(spec?.template).toBe('PROBLEM_SOLUTION');
+  });
+
+  it('refuses PROBLEM_SOLUTION when only one half exists', () => {
+    // The other panel could only be invented.
+    const spec = selectVisualSpec(
+      { suggestedVisuals: ['PROBLEM_SOLUTION'], problem: stated('Long notes overflow the context window') },
+      paper,
+    );
+    expect(spec?.template).not.toBe('PROBLEM_SOLUTION');
+  });
+
+  it('builds CONCEPT_EXPLAINER from technical terms', () => {
+    const spec = selectVisualSpec(
+      {
+        suggestedVisuals: ['CONCEPT_EXPLAINER'],
+        technicalTerms: [
+          { term: 'Sparse attention', plainLanguage: 'The model only looks at the parts that matter.' },
+          { term: 'Context window', plainLanguage: 'How much text the model can hold at once.' },
+        ],
+      },
+      paper,
+    );
+    expect(spec?.template).toBe('CONCEPT_EXPLAINER');
+    expect(spec).toMatchObject({ terms: [{ term: 'Sparse attention' }, { term: 'Context window' }] });
+  });
+
+  it('falls through PROCESS_FLOW, which has no ordered-step data to draw on', () => {
+    const spec = selectVisualSpec(
+      { suggestedVisuals: ['PROCESS_FLOW'], importantNumbers: [number('Speedup', '1.4×')] },
+      paper,
+    );
+    expect(spec?.template).toBe('STAT_CARD');
+  });
+
   it('describes card content in alt text rather than naming the template', () => {
     const spec = selectVisualSpec({ importantNumbers: [number('Recall improvement', '37%')] }, paper);
     const alt = visualAltText(spec!);

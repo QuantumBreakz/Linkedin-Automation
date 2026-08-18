@@ -64,11 +64,41 @@ const ComparisonSpecSchema = z.object({
   theme: ThemeSchema.optional(),
 });
 
+/**
+ * PROBLEM_SOLUTION — the gap the paper identifies, and what it does about it.
+ * Backs the `PROBLEM_SOLUTION` suggestion, which previously had no renderer.
+ */
+const ProblemSolutionSpecSchema = z.object({
+  template: z.literal('PROBLEM_SOLUTION'),
+  headline: z.string().max(120),
+  problem: z.string().max(240),
+  solution: z.string().max(240),
+  source: z.string().max(100),
+  theme: ThemeSchema.optional(),
+});
+
+/**
+ * CONCEPT_EXPLAINER — jargon in plain language, built from the extraction's
+ * `technicalTerms`. Backs the `CONCEPT_EXPLAINER` suggestion.
+ */
+const ConceptExplainerSpecSchema = z.object({
+  template: z.literal('CONCEPT_EXPLAINER'),
+  headline: z.string().max(120),
+  terms: z
+    .array(z.object({ term: z.string().max(60), plain: z.string().max(180) }))
+    .min(1)
+    .max(4),
+  source: z.string().max(100),
+  theme: ThemeSchema.optional(),
+});
+
 export const VisualSpecSchema = z.discriminatedUnion('template', [
   StatCardSpecSchema,
   KeyFindingsSpecSchema,
   QuoteCardSpecSchema,
   ComparisonSpecSchema,
+  ProblemSolutionSpecSchema,
+  ConceptExplainerSpecSchema,
 ]);
 
 export type VisualSpec = z.infer<typeof VisualSpecSchema>;
@@ -79,4 +109,6 @@ export const VISUAL_TEMPLATES: readonly VisualTemplate[] = [
   'KEY_FINDINGS',
   'QUOTE_CARD',
   'COMPARISON',
+  'PROBLEM_SOLUTION',
+  'CONCEPT_EXPLAINER',
 ] as const;

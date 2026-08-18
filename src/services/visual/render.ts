@@ -161,6 +161,14 @@ async function buildTemplate(spec: VisualSpec) {
       const { Comparison } = await import('./templates/comparison');
       return Comparison(spec);
     }
+    case 'PROBLEM_SOLUTION': {
+      const { ProblemSolution } = await import('./templates/problem-solution');
+      return ProblemSolution(spec);
+    }
+    case 'CONCEPT_EXPLAINER': {
+      const { ConceptExplainer } = await import('./templates/concept-explainer');
+      return ConceptExplainer(spec);
+    }
     default:
       throw new Error(`Unknown visual template: ${(spec as { template: string }).template}`);
   }

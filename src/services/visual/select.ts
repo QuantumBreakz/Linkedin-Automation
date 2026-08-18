@@ -133,6 +133,41 @@ function buildComparison(
   };
 }
 
+function buildProblemSolution(
+  extraction: ResearchExtraction,
+  paper: VisualPaperContext,
+): VisualSpec | null {
+  // Both halves must be real: a "problem" with no stated solution (or the
+  // reverse) would leave one panel to be invented.
+  const problem = extraction.problem?.value?.trim();
+  const solution = (extraction.novelty ?? extraction.methodology)?.value?.trim();
+  if (!problem || !solution) return null;
+  return {
+    template: 'PROBLEM_SOLUTION',
+    headline: clip(paper.title, 120),
+    problem: clip(problem, 240),
+    solution: clip(solution, 240),
+    source: sourceLine(paper),
+  };
+}
+
+function buildConceptExplainer(
+  extraction: ResearchExtraction,
+  paper: VisualPaperContext,
+): VisualSpec | null {
+  const terms = (extraction.technicalTerms ?? [])
+    .filter((entry) => entry.term.trim().length > 0 && entry.plainLanguage.trim().length > 0)
+    .slice(0, 4)
+    .map((entry) => ({ term: clip(entry.term, 60), plain: clip(entry.plainLanguage, 180) }));
+  if (terms.length === 0) return null;
+  return {
+    template: 'CONCEPT_EXPLAINER',
+    headline: clip(paper.title, 120),
+    terms,
+    source: sourceLine(paper),
+  };
+}
+
 // ────────────────────────────  selection  ────────────────────────────
 
 /** Suggestions that map onto the COMPARISON renderer. */
@@ -160,15 +195,24 @@ export function selectVisualSpec(
     } else if (COMPARATIVE_SUGGESTIONS.has(suggestion)) {
       const spec = buildComparison(extraction, paper);
       if (spec) return spec;
+    } else if (suggestion === 'PROBLEM_SOLUTION') {
+      const spec = buildProblemSolution(extraction, paper);
+      if (spec) return spec;
+    } else if (suggestion === 'CONCEPT_EXPLAINER') {
+      const spec = buildConceptExplainer(extraction, paper);
+      if (spec) return spec;
     }
-    // PROBLEM_SOLUTION / PROCESS_FLOW / CONCEPT_EXPLAINER have no renderer yet;
-    // fall through to whatever the extraction can support.
+    // PROCESS_FLOW is deliberately unhandled: the extraction carries no ordered
+    // steps, so a flow diagram could only be invented. It falls through to a
+    // template backed by real fields.
   }
 
   return (
     buildStatCard(extraction, paper) ??
     buildKeyFindings(extraction, paper) ??
-    buildQuoteCard(extraction, paper)
+    buildProblemSolution(extraction, paper) ??
+    buildQuoteCard(extraction, paper) ??
+    buildConceptExplainer(extraction, paper)
   );
 }
 
@@ -188,6 +232,13 @@ export function visualAltText(spec: VisualSpec): string {
     case 'COMPARISON':
       return clip(
         `${spec.leftLabel}: ${spec.leftValue}, compared with ${spec.rightLabel}: ${spec.rightValue}.`,
+        300,
+      );
+    case 'PROBLEM_SOLUTION':
+      return clip(`The problem: ${spec.problem} What this work does: ${spec.solution}`, 300);
+    case 'CONCEPT_EXPLAINER':
+      return clip(
+        `Key terms explained — ${spec.terms.map((t) => `${t.term}: ${t.plain}`).join('; ')}`,
         300,
       );
   }

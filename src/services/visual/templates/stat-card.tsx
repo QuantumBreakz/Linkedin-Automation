@@ -7,6 +7,7 @@
 
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
+import { CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize, fitSingleLine } from '../layout';
 
 type StatCardSpec = Extract<VisualSpec, { template: 'STAT_CARD' }>;
 
@@ -17,8 +18,26 @@ const DEFAULTS = {
   accent: '#22D3EE',
 };
 
+/** The hero figure shrinks rather than wrapping — see fitSingleLine. */
+const STAT_LADDER = [160, 132, 108, 88, 72, 58, 48] as const;
+const HEADLINE_LADDER = [42, 38, 34, 30] as const;
+const LABEL_LADDER = [36, 32, 28, 25] as const;
+const CONTEXT_LADDER = [28, 26, 23, 21] as const;
+
 export function StatCard(spec: StatCardSpec) {
   const theme = { ...DEFAULTS, ...spec.theme };
+
+  const statSize = fitSingleLine(spec.stat, CONTENT_WIDTH, STAT_LADDER);
+  const headlineSize = fitFontSize(
+    spec.headline,
+    CONTENT_WIDTH,
+    190,
+    HEADLINE_LADDER,
+    1.3,
+    CHAR_WIDTH_RATIO.DISPLAY,
+  );
+  const labelSize = fitFontSize(spec.statLabel, CONTENT_WIDTH, 100, LABEL_LADDER, 1.25);
+  const contextSize = fitFontSize(spec.context, CONTENT_WIDTH, 190, CONTEXT_LADDER, 1.5);
 
   return React.createElement(
     'div',
@@ -50,13 +69,12 @@ export function StatCard(spec: StatCardSpec) {
       'div',
       {
         style: {
-          fontSize: '42px',
+          fontSize: `${headlineSize}px`,
           fontWeight: 600,
           color: theme.text,
           opacity: 0.9,
           marginTop: '40px',
           lineHeight: 1.3,
-          maxWidth: '900px',
         },
       },
       spec.headline,
@@ -68,11 +86,11 @@ export function StatCard(spec: StatCardSpec) {
       'div',
       {
         style: {
-          fontSize: '160px',
+          fontSize: `${statSize}px`,
           fontWeight: 700,
           color: theme.accent,
           lineHeight: 1,
-          letterSpacing: '-4px',
+          letterSpacing: `${Math.round(statSize * -0.025)}px`,
         },
       },
       spec.stat,
@@ -82,10 +100,11 @@ export function StatCard(spec: StatCardSpec) {
       'div',
       {
         style: {
-          fontSize: '36px',
+          fontSize: `${labelSize}px`,
           fontWeight: 600,
           color: theme.primary,
           marginTop: '16px',
+          lineHeight: 1.25,
         },
       },
       spec.statLabel,
@@ -95,12 +114,11 @@ export function StatCard(spec: StatCardSpec) {
       'div',
       {
         style: {
-          fontSize: '28px',
+          fontSize: `${contextSize}px`,
           color: theme.text,
           opacity: 0.7,
           marginTop: '24px',
           lineHeight: 1.5,
-          maxWidth: '880px',
         },
       },
       spec.context,
