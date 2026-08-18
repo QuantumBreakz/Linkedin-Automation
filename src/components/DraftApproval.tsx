@@ -73,7 +73,8 @@ export function DraftApproval({
 
   const composedLength = composePostText(body, hashtags).length;
   const tooLong = composedLength > MAX_LENGTH;
-  const published = status === 'PUBLISHED' || status === 'CANCELLED';
+  const isPublished = status === 'PUBLISHED';
+  const isCancelled = status === 'CANCELLED';
   const dirty = body !== draft.body || hashtags.join(' ') !== draft.hashtags.join(' ');
 
   async function save() {
@@ -173,7 +174,7 @@ export function DraftApproval({
                 type="button"
                 onClick={() => setEditing((value) => !value)}
                 className="btn btn-quiet btn-sm"
-                disabled={published}
+                disabled={isPublished || isCancelled}
               >
                 {editing ? 'Preview' : 'Edit'}
               </button>
@@ -255,11 +256,13 @@ export function DraftApproval({
             Approval
           </p>
           <p className="mt-2 text-sm leading-relaxed text-cream-100/70">
-            {published
+            {isPublished
               ? dryRun
                 ? 'Marked as published. Dry-run mode was on, so nothing was actually sent to LinkedIn.'
                 : 'This post is live on LinkedIn.'
-              : 'Nothing is sent to LinkedIn until you approve it here.'}
+              : isCancelled
+                ? 'This draft has been discarded and cancelled.'
+                : 'Nothing is sent to LinkedIn until you approve it here.'}
           </p>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -269,7 +272,7 @@ export function DraftApproval({
             </Badge>
           </div>
 
-          {!published && (
+          {!isPublished && !isCancelled && (
             <div className="mt-5 space-y-2.5">
               {dryRun && (
                 <p className="rounded-2xl bg-amber-soft px-3.5 py-2.5 text-[0.7rem] leading-relaxed text-amber-warn">
@@ -366,7 +369,7 @@ export function DraftApproval({
             </div>
           )}
 
-          {published && draft.permalink && (
+          {isPublished && draft.permalink && (
             <a
               href={draft.permalink}
               target="_blank"
