@@ -1,6 +1,11 @@
 /**
  * Draft Generation processor — runs Stage 2 (Format Gate), Stage 3 (Drafting),
  * Stage 4 (Verification), and optionally Stage 5 (Visual Rendering).
+ *
+ * The work lives in `generatePaperDraft`, a plain function so it runs in this
+ * BullMQ worker or inline (services/pipeline/run.ts). It is idempotent per
+ * paper: if a draft already exists it returns that one rather than making a
+ * second, so the inline path and the worker can never double-draft.
  */
 
 import type { Job } from 'bullmq';
@@ -23,9 +28,24 @@ export interface DraftJobData {
   requestedFormat?: ContentFormat;
 }
 
-export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
-  const { paperId, userId, requestedFormat } = job.data;
+export async function generatePaperDraft(
+  paperId: string,
+  userId: string,
+  requestedFormat?: ContentFormat,
+): Promise<{ draftId: string | null }> {
   logger.info('Processing draft generation', { paperId, userId, requestedFormat });
+
+  // Idempotency guard: one draft per paper. Without this the inline pipeline
+  // and the worker's hourly re-poll would each create a draft for the same
+  // paper.
+  const existing = await db.contentDraft.findFirst({
+    where: { userId, paperId },
+    select: { id: true },
+  });
+  if (existing) {
+    logger.info('Draft already exists for paper; skipping generation', { paperId, draftId: existing.id });
+    return { draftId: existing.id };
+  }
 
   const [paper, user, brand] = await Promise.all([
     db.researchPaper.findUnique({
@@ -44,7 +64,7 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
 
   if (!paper || !user || !analysis) {
     logger.warn('Missing required records for draft generation', { paperId, userId });
-    return;
+    return { draftId: null };
   }
 
   const extraction = analysis.extraction as unknown as ResearchExtraction;
@@ -52,7 +72,7 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
 
   if (eligible.length === 0) {
     logger.info('No eligible content formats for this paper extraction', { paperId });
-    return;
+    return { draftId: null };
   }
 
   const format: ContentFormat =
@@ -229,4 +249,11 @@ export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
       logger.warn('Visual asset generation failed; proceeding without visual', { err });
     }
   }
+
+  return { draftId: createdDraft.id };
+}
+
+export async function processDraftJob(job: Job<DraftJobData>): Promise<void> {
+  const { paperId, userId, requestedFormat } = job.data;
+  await generatePaperDraft(paperId, userId, requestedFormat);
 }

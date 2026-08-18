@@ -1,5 +1,8 @@
 /**
  * Paper Analysis processor — runs Stage 1 Extraction on ingested papers.
+ *
+ * The extraction lives in `analyzePaper`, a plain function usable from this
+ * BullMQ worker or inline (services/pipeline/run.ts).
  */
 
 import type { Job } from 'bullmq';
@@ -15,37 +18,44 @@ export interface AnalyzeJobData {
   autoDraft?: boolean;
 }
 
-export async function processAnalyzeJob(job: Job<AnalyzeJobData>): Promise<void> {
-  const { paperId, userId, autoDraft = true } = job.data;
+/** Confidence below this is treated as too weak to auto-draft from. */
+export const MIN_DRAFT_CONFIDENCE = 0.2;
+
+export interface AnalyzeResult {
+  analysisId: string | null;
+  confidence: number;
+}
+
+/**
+ * Runs extraction for one paper and stores it as analysis v1 (idempotent
+ * upsert). Returns the analysis id and confidence so the caller can decide
+ * whether to draft. Returns a null id for a paper that cannot be analysed
+ * (missing or retracted).
+ */
+export async function analyzePaper(paperId: string, userId: string): Promise<AnalyzeResult> {
   logger.info('Starting research extraction for paper', { paperId, userId });
 
-  const paper = await db.researchPaper.findUnique({
-    where: { id: paperId },
-  });
-
+  const paper = await db.researchPaper.findUnique({ where: { id: paperId } });
   if (!paper) {
     logger.warn('Paper not found for analysis job', { paperId });
-    return;
+    return { analysisId: null, confidence: 0 };
   }
-
   if (paper.isRetracted) {
     logger.info('Skipping extraction for retracted paper', { paperId });
-    return;
+    return { analysisId: null, confidence: 0 };
   }
 
-  // Run Stage 1 extraction
   const result = await extractResearch(
     {
       title: paper.title,
       abstract: paper.abstract,
-      fullText: null, // Full-text fetch hook can be attached here when available
+      fullText: null,
       fullTextStatus: paper.fullTextStatus,
     },
     openRouterProvider,
     { userId, paperId },
   );
 
-  // Store in database
   const analysis = await db.paperAnalysis.upsert({
     where: { paperId_version: { paperId, version: 1 } },
     create: {
@@ -74,12 +84,14 @@ export async function processAnalyzeJob(job: Job<AnalyzeJobData>): Promise<void>
     modelId: result.modelId,
   });
 
-  // Automatically queue draft generation if eligible and requested
-  if (autoDraft && result.confidence >= 0.2) {
-    await draftGenerateQueue.add(`draft-${paperId}`, {
-      paperId,
-      userId,
-      analysisId: analysis.id,
-    });
+  return { analysisId: analysis.id, confidence: result.confidence };
+}
+
+export async function processAnalyzeJob(job: Job<AnalyzeJobData>): Promise<void> {
+  const { paperId, userId, autoDraft = true } = job.data;
+  const { analysisId, confidence } = await analyzePaper(paperId, userId);
+
+  if (autoDraft && analysisId && confidence >= MIN_DRAFT_CONFIDENCE) {
+    await draftGenerateQueue.add(`draft-${paperId}`, { paperId, userId, analysisId });
   }
 }

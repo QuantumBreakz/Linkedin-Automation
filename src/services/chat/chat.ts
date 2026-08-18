@@ -45,10 +45,40 @@ function describeBrand(brand: BrandProfile | null): string {
     .join(' ');
 }
 
+/** A paper from the user's library, summarised for the chat context. */
+export interface LibraryPaper {
+  title: string;
+  abstract: string | null;
+  venue: string | null;
+  publicationDate: Date | null;
+}
+
+/**
+ * A compact digest of the researcher's own papers, injected so the assistant
+ * can answer questions about their work and draft from real findings. It is
+ * grounding data, never instructions — kept short so it does not crowd the
+ * conversation, and honest about its limits (abstract-level only).
+ */
+function describeLibrary(papers: LibraryPaper[]): string {
+  if (papers.length === 0) return '';
+  const lines = papers.map((p, i) => {
+    const year = p.publicationDate ? p.publicationDate.getUTCFullYear() : null;
+    const meta = [p.venue, year].filter(Boolean).join(', ');
+    const abstract = (p.abstract ?? '').replace(/\s+/g, ' ').trim().slice(0, 400);
+    return `${i + 1}. "${p.title}"${meta ? ` (${meta})` : ''}${abstract ? ` — ${abstract}` : ''}`;
+  });
+  return [
+    "The researcher's own papers (their library). Ground answers about their work in these — refer to them by their real titles, and never invent papers, numbers, or findings that are not present here. This is abstract-level detail; if asked for something not in it, say so rather than guessing:",
+    ...lines,
+  ].join('\n');
+}
+
 function buildSystemPrompt(
   user: Pick<User, 'name' | 'title' | 'fieldOfStudy' | 'researchAreas'>,
   brand: BrandProfile | null,
+  library: LibraryPaper[],
 ): string {
+  const libraryBlock = describeLibrary(library);
   return [
     'You are the writing assistant inside a research-to-LinkedIn publishing tool.',
     'You help one researcher plan, draft, and sharpen LinkedIn posts about their own published work.',
@@ -60,6 +90,7 @@ function buildSystemPrompt(
     user.researchAreas.length > 0 ? `- Research areas: ${user.researchAreas.join(', ')}` : '',
     '',
     `Their voice profile: ${describeBrand(brand)}`,
+    libraryBlock,
     '',
     'How to behave:',
     '- When asked for a post, return the post text itself, ready to paste. No preamble like "Here is your post".',
@@ -192,7 +223,7 @@ export async function sendMessage(args: {
   const conversation = await getConversation(userId, conversationId);
   if (!conversation) return null;
 
-  const [user, brand, history] = await Promise.all([
+  const [user, brand, history, library] = await Promise.all([
     db.user.findUniqueOrThrow({
       where: { id: userId },
       select: { name: true, title: true, fieldOfStudy: true, researchAreas: true },
@@ -203,6 +234,13 @@ export async function sendMessage(args: {
       orderBy: { createdAt: 'desc' },
       take: HISTORY_TURNS,
       select: { role: true, content: true },
+    }),
+    // The researcher's own papers, so the assistant can answer about their work.
+    db.researchPaper.findMany({
+      where: { userId, dismissed: false, isRetracted: false },
+      orderBy: { discoveredAt: 'desc' },
+      take: 10,
+      select: { title: true, abstract: true, venue: true, publicationDate: true },
     }),
   ]);
 
@@ -223,7 +261,7 @@ export async function sendMessage(args: {
   try {
     const result = await openRouterProvider.complete({
       role: 'standard',
-      system: buildSystemPrompt(user, brand),
+      system: buildSystemPrompt(user, brand, library),
       messages,
       temperature: 0.7,
       maxTokens: MAX_REPLY_TOKENS,

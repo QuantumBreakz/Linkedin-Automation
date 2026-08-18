@@ -36,7 +36,12 @@ const ABANDON_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 /** Bound the work per tick so one sweep cannot run unbounded. */
 const MAX_PER_TICK = 50;
 
-export async function processScheduleSweepJob(_job: Job): Promise<void> {
+/**
+ * The sweep itself, as a plain function so it can run in the BullMQ worker or
+ * inline (e.g. on a page load) — scheduled posts must still go out for a user
+ * who runs only the web app, not a separate worker.
+ */
+export async function runScheduleSweep(): Promise<void> {
   const now = Date.now();
 
   // 1) Recover crashed publish locks.
@@ -102,4 +107,8 @@ export async function processScheduleSweepJob(_job: Job): Promise<void> {
       logger.error('Schedule sweep threw while publishing a draft', { draftId: draft.id, err });
     }
   }
+}
+
+export async function processScheduleSweepJob(_job: Job): Promise<void> {
+  await runScheduleSweep();
 }

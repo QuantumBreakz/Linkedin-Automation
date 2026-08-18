@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { db } from '@/lib/db';
 import { requireSessionUser } from '@/lib/session';
+import { runScheduleSweep } from '@/worker/processors/schedule-sweep.processor';
+import { logger } from '@/lib/logger';
 import {
   PageShell,
   PageHeader,
@@ -18,6 +20,13 @@ import {
 export default async function DashboardPage() {
   const user = await requireSessionUser();
   const userId = user.id;
+
+  // Publish any scheduled posts whose time has passed, in-process, so
+  // scheduling works for a user who runs only the web app and not a separate
+  // worker. Fire-and-forget and idempotent — it never blocks the dashboard, and
+  // the worker's own sweep (when running) can't double-post thanks to the
+  // atomic claim inside publishDraft.
+  void runScheduleSweep().catch((err) => logger.error('Inline schedule sweep failed', { err }));
 
   // One round trip, every query scoped to this user.
   const [profile, account, papers, needsReview, scheduled, published, recent, nextUp] =

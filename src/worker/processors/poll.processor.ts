@@ -1,6 +1,11 @@
 /**
  * Source polling processor — fetches works from registered research sources
- * and dispatches them to ingestion and analysis.
+ * and ingests them.
+ *
+ * The polling itself lives in `pollSources`, a plain function so it can run in
+ * this BullMQ worker *or* inline in the web process (see
+ * services/pipeline/run.ts) — the app must not depend on a separate worker
+ * being up for a freshly added source to start discovering papers.
  */
 
 import type { Job } from 'bullmq';
@@ -17,9 +22,21 @@ export interface PollJobData {
   sourceId?: string;
 }
 
-export async function processPollJob(job: Job<PollJobData>): Promise<void> {
-  const { sourceId } = job.data;
-  logger.info('Running source poll job', { sourceId });
+/** A paper newly created during a poll, with the owner it belongs to. */
+export interface CreatedPaper {
+  paperId: string;
+  userId: string;
+}
+
+/**
+ * Polls one source (or every active source when `sourceId` is omitted), ingests
+ * each fetched paper, and returns the papers that were newly created this run —
+ * leaving the caller to decide how analysis is dispatched (enqueued by the
+ * worker, or run inline). Never throws for a single bad source: it records the
+ * failure on that source row and moves on.
+ */
+export async function pollSources(sourceId?: string): Promise<{ created: CreatedPaper[] }> {
+  const created: CreatedPaper[] = [];
 
   const sources = await db.researchSource.findMany({
     where: sourceId
@@ -59,25 +76,16 @@ export async function processPollJob(job: Job<PollJobData>): Promise<void> {
         });
 
         if (ingestResult.action === 'created' && ingestResult.paperId) {
-          // Queue automatic analysis for new papers
-          await paperAnalyzeQueue.add(`analyze-${ingestResult.paperId}`, {
-            paperId: ingestResult.paperId,
-            userId: source.userId,
-            autoDraft: true,
-          });
+          created.push({ paperId: ingestResult.paperId, userId: source.userId });
         }
       }
 
-      // Update source cursor and last checked time.
-      //
       // Store nextCursor verbatim — including null. Per the adapter contract a
       // null nextCursor means "all pages fetched for this sync cycle", and every
       // paginated adapter sorts newest-first, so resetting to null is what makes
       // the *next* cycle start again at page 0 and pick up newly published work
       // (already-seen papers dedupe on canonicalKey, so re-scanning is cheap and
-      // never re-drafts). The old `?? source.cursor` fallback pinned the cursor
-      // at the final offset forever, so after the initial backfill the poller
-      // re-fetched the same trailing page and never saw a new paper again.
+      // never re-drafts).
       await db.researchSource.update({
         where: { id: source.id },
         data: {
@@ -101,5 +109,17 @@ export async function processPollJob(job: Job<PollJobData>): Promise<void> {
         },
       });
     }
+  }
+
+  return { created };
+}
+
+export async function processPollJob(job: Job<PollJobData>): Promise<void> {
+  const { sourceId } = job.data;
+  logger.info('Running source poll job', { sourceId });
+
+  const { created } = await pollSources(sourceId);
+  for (const { paperId, userId } of created) {
+    await paperAnalyzeQueue.add(`analyze-${paperId}`, { paperId, userId, autoDraft: true });
   }
 }

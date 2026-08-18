@@ -13,6 +13,7 @@ import {
   formatDate,
 } from '@/components/ui';
 import { ProfileSettingsForm, VoiceSettingsForm } from '@/components/SettingsForms';
+import { DisconnectLinkedIn } from '@/components/DisconnectLinkedIn';
 
 export const metadata = { title: 'Profile — Researchly' };
 
@@ -169,6 +170,7 @@ export default async function SettingsPage({
                 <a href="/api/linkedin/auth" className="btn btn-quiet btn-sm mt-4 w-full">
                   Reconnect
                 </a>
+                <DisconnectLinkedIn />
               </>
             ) : (
               <>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { withUser, badRequest } from '@/lib/session';
 import { getAdapter } from '@/services/sources/adapter';
-import { sourcesPollQueue } from '@/worker/queues';
+import { runPipelineForSource } from '@/services/pipeline/run';
 import { logger } from '@/lib/logger';
 import type { SourceKind } from '@prisma/client';
 
@@ -50,13 +50,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       data: { userId, kind, identifier, label: label || null, syncStatus: 'PENDING' },
     });
 
-    // The source is saved either way; a queue that is down delays discovery
-    // rather than losing the connection the user just made.
-    try {
-      await sourcesPollQueue.add(`initial-poll-${source.id}`, { sourceId: source.id });
-    } catch (err) {
-      logger.warn('Could not enqueue the initial source poll', { sourceId: source.id, err });
-    }
+    // Start discovery immediately, in-process, so the source begins ingesting
+    // without depending on a separate worker being up. Fire-and-forget: polling
+    // and drafting can take a while (network + LLM), so we don't make the user
+    // wait on it — papers appear in the inbox as they land, and the worker's
+    // hourly re-poll (when running) keeps it current after that.
+    void runPipelineForSource(source.id).catch((err) =>
+      logger.error('Inline source pipeline failed', { sourceId: source.id, err }),
+    );
 
     return NextResponse.json({ source }, { status: 201 });
   });
