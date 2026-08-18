@@ -20,7 +20,7 @@ import { verifyDraft } from '@/services/analysis/verify-claims';
 import { openRouterProvider } from '@/services/llm/provider';
 import type { ResearchExtraction } from '@/services/content/types';
 import { renderVisual } from '@/services/visual/render';
-import type { VisualSpec } from '@/services/visual/visual-types';
+import { selectVisualSpec, visualAltText } from '@/services/visual/select';
 
 export interface DraftJobData {
   paperId: string;
@@ -223,19 +223,23 @@ async function generateDraftInner(
     }
   }
 
-  // Stage 5: Visual Card generation if appropriate (e.g. VISUAL_EXPLAINER or numbers present)
-  if (extraction.importantNumbers && extraction.importantNumbers.length > 0) {
-    try {
-      const topNum = extraction.importantNumbers[0]!;
-      const spec: VisualSpec = {
-        template: 'STAT_CARD',
-        headline: paper.title.slice(0, 100),
-        stat: topNum.value,
-        statLabel: topNum.metric,
-        context: topNum.context,
-        source: paper.venue ?? paper.title.slice(0, 50),
-      };
+  // Stage 5: Visual card. The template is chosen from what this paper actually
+  // yielded — and from the model's own `suggestedVisuals` hint — so a paper with
+  // no extracted numbers still gets a relevant card (key findings, a quote)
+  // instead of no image at all, which is what happened when this only ever
+  // built a STAT_CARD.
+  const spec = selectVisualSpec(extraction, {
+    title: paper.title,
+    venue: paper.venue,
+    authors: paper.authors.map((a) => ({
+      name: a.name,
+      isUser: a.isUser,
+      position: a.position,
+    })),
+  });
 
+  if (spec) {
+    try {
       const render = await renderVisual(spec);
 
       await db.visualAsset.create({
@@ -247,13 +251,14 @@ async function generateDraftInner(
           storageKey: render.storageKey,
           width: render.width,
           height: render.height,
-          altText: `Stat card showing ${topNum.metric}: ${topNum.value}`,
+          altText: visualAltText(spec),
           isPrimary: true,
         },
       });
 
       logger.info('Attached visual asset to draft', {
         draftId: createdDraft.id,
+        template: spec.template,
         specHash: render.specHash,
       });
     } catch (err) {
