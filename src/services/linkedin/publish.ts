@@ -21,6 +21,7 @@
 
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { recordStage } from '@/lib/stage';
 import { publishIdempotencyKey } from '@/lib/ids';
 import { getStorage } from '@/lib/storage';
 import { decryptAccessToken, postText, postWithImage } from '@/services/linkedin/client';
@@ -203,6 +204,10 @@ export async function publishDraft(args: {
     ]);
 
     logger.info('Draft published to LinkedIn', { draftId, urn: result.urn, surface: result.surface });
+    await recordStage('publish', { refType: 'draft', refId: draftId }, {
+      ok: true,
+      detail: result.surface === 'dry-run' ? 'published (dry-run)' : `published via ${result.surface}`,
+    });
     return {
       ok: true,
       alreadyPublished: false,
@@ -213,6 +218,10 @@ export async function publishDraft(args: {
   } catch (err) {
     logger.error('LinkedIn publishing failed', { draftId, err });
     await db.contentDraft.update({ where: { id: draftId }, data: { status: 'FAILED' } });
+    await recordStage('publish', { refType: 'draft', refId: draftId }, {
+      ok: false,
+      detail: err instanceof Error ? err.message : 'LinkedIn rejected the post.',
+    });
     return {
       ok: false,
       reason: 'linkedin_error',

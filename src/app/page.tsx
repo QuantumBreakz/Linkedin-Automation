@@ -41,7 +41,12 @@ export default async function DashboardPage() {
       }),
       db.researchPaper.count({ where: { userId, dismissed: false } }),
       db.contentDraft.count({ where: { userId, status: 'NEEDS_REVIEW' } }),
-      db.contentDraft.count({ where: { userId, status: 'SCHEDULED' } }),
+      // "Queued to go out" = approved and waiting, whether or not it has a
+      // specific time yet. An APPROVED draft (approved, no slot) still belongs
+      // in this count — it is in the publish queue — which is exactly what the
+      // Schedule page shows. Counting only SCHEDULED made the dashboard read 0
+      // while an approved draft sat queued.
+      db.contentDraft.count({ where: { userId, status: { in: ['SCHEDULED', 'APPROVED'] } } }),
       db.contentDraft.count({ where: { userId, status: 'PUBLISHED' } }),
       db.contentDraft.findMany({
         where: { userId, status: { in: ['NEEDS_REVIEW', 'GENERATED'] } },
@@ -50,8 +55,10 @@ export default async function DashboardPage() {
         take: 4,
       }),
       db.contentDraft.findFirst({
-        where: { userId, status: 'SCHEDULED' },
+        where: { userId, status: { in: ['SCHEDULED', 'APPROVED'] } },
         include: { paper: { select: { title: true } } },
+        // Postgres sorts NULLs last on ASC, so a draft with a real time comes
+        // before an approved draft that has no slot yet.
         orderBy: { scheduledFor: 'asc' },
       }),
     ]);
@@ -137,7 +144,13 @@ export default async function DashboardPage() {
         <StatTile
           label="Scheduled"
           value={scheduled}
-          hint={nextUp?.scheduledFor ? `Next ${formatDateTime(nextUp.scheduledFor)}` : 'Nothing queued'}
+          hint={
+            nextUp?.scheduledFor
+              ? `Next ${formatDateTime(nextUp.scheduledFor)}`
+              : scheduled > 0
+                ? 'Approved — awaiting a slot'
+                : 'Nothing queued'
+          }
           progress={Math.min(1, scheduled / 10)}
           tone="clay"
         />

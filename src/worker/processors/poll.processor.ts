@@ -11,6 +11,7 @@
 import type { Job } from 'bullmq';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { recordStage } from '@/lib/stage';
 import { getAdapter } from '@/services/sources/adapter';
 import { processIngestJob } from '@/services/ingest/paper-ingest';
 import { paperAnalyzeQueue } from '../queues';
@@ -45,6 +46,7 @@ export async function pollSources(sourceId?: string): Promise<{ created: Created
   });
 
   for (const source of sources) {
+    const createdBefore = created.length;
     try {
       const adapter = getAdapter(source.kind);
       if (!adapter) {
@@ -97,6 +99,11 @@ export async function pollSources(sourceId?: string): Promise<{ created: Created
           lastError: null,
         },
       });
+
+      await recordStage('poll', { refType: 'source', refId: source.id }, {
+        ok: true,
+        detail: `${fetchResult.papers.length} fetched, ${created.length - createdBefore} new`,
+      });
     } catch (err) {
       logger.error('Error polling source', { sourceId: source.id, err });
       await db.researchSource.update({
@@ -107,6 +114,11 @@ export async function pollSources(sourceId?: string): Promise<{ created: Created
           consecutiveFailures: { increment: 1 },
           lastError: err instanceof Error ? err.message : String(err),
         },
+      });
+
+      await recordStage('poll', { refType: 'source', refId: source.id }, {
+        ok: false,
+        detail: err instanceof Error ? err.message : String(err),
       });
     }
   }

@@ -12,6 +12,7 @@ import type { Job } from 'bullmq';
 import type { ContentFormat } from '@prisma/client';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { runStage } from '@/lib/stage';
 import { eligibleFormats, selectFormat } from '@/services/content/format-gate';
 import { generateDraft } from '@/services/content/draft';
 import { scheduleDraftToNextSlot } from '@/services/scheduling/slots';
@@ -29,6 +30,16 @@ export interface DraftJobData {
 }
 
 export async function generatePaperDraft(
+  paperId: string,
+  userId: string,
+  requestedFormat?: ContentFormat,
+): Promise<{ draftId: string | null }> {
+  return runStage('draft', { refType: 'paper', refId: paperId }, () =>
+    generateDraftInner(paperId, userId, requestedFormat),
+  );
+}
+
+async function generateDraftInner(
   paperId: string,
   userId: string,
   requestedFormat?: ContentFormat,

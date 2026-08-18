@@ -8,6 +8,7 @@
 import type { Job } from 'bullmq';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
+import { runStage } from '@/lib/stage';
 import { extractResearch } from '@/services/analysis/extract';
 import { openRouterProvider } from '@/services/llm/provider';
 import { draftGenerateQueue } from '../queues';
@@ -33,58 +34,58 @@ export interface AnalyzeResult {
  * (missing or retracted).
  */
 export async function analyzePaper(paperId: string, userId: string): Promise<AnalyzeResult> {
-  logger.info('Starting research extraction for paper', { paperId, userId });
+  return runStage('analyze', { refType: 'paper', refId: paperId }, async () => {
+    const paper = await db.researchPaper.findUnique({ where: { id: paperId } });
+    if (!paper) {
+      logger.warn('Paper not found for analysis job', { paperId });
+      return { analysisId: null, confidence: 0 };
+    }
+    if (paper.isRetracted) {
+      logger.info('Skipping extraction for retracted paper', { paperId });
+      return { analysisId: null, confidence: 0 };
+    }
 
-  const paper = await db.researchPaper.findUnique({ where: { id: paperId } });
-  if (!paper) {
-    logger.warn('Paper not found for analysis job', { paperId });
-    return { analysisId: null, confidence: 0 };
-  }
-  if (paper.isRetracted) {
-    logger.info('Skipping extraction for retracted paper', { paperId });
-    return { analysisId: null, confidence: 0 };
-  }
+    const result = await extractResearch(
+      {
+        title: paper.title,
+        abstract: paper.abstract,
+        fullText: null,
+        fullTextStatus: paper.fullTextStatus,
+      },
+      openRouterProvider,
+      { userId, paperId },
+    );
 
-  const result = await extractResearch(
-    {
-      title: paper.title,
-      abstract: paper.abstract,
-      fullText: null,
-      fullTextStatus: paper.fullTextStatus,
-    },
-    openRouterProvider,
-    { userId, paperId },
-  );
+    const analysis = await db.paperAnalysis.upsert({
+      where: { paperId_version: { paperId, version: 1 } },
+      create: {
+        paperId,
+        version: 1,
+        extraction: result.extraction as object,
+        provenance: result.provenance,
+        confidence: result.confidence,
+        basedOn: result.basedOn,
+        modelId: result.modelId,
+        promptHash: result.promptHash,
+      },
+      update: {
+        extraction: result.extraction as object,
+        provenance: result.provenance,
+        confidence: result.confidence,
+        basedOn: result.basedOn,
+        modelId: result.modelId,
+        promptHash: result.promptHash,
+      },
+    });
 
-  const analysis = await db.paperAnalysis.upsert({
-    where: { paperId_version: { paperId, version: 1 } },
-    create: {
+    logger.info('Research extraction completed', {
       paperId,
-      version: 1,
-      extraction: result.extraction as object,
-      provenance: result.provenance,
       confidence: result.confidence,
-      basedOn: result.basedOn,
       modelId: result.modelId,
-      promptHash: result.promptHash,
-    },
-    update: {
-      extraction: result.extraction as object,
-      provenance: result.provenance,
-      confidence: result.confidence,
-      basedOn: result.basedOn,
-      modelId: result.modelId,
-      promptHash: result.promptHash,
-    },
-  });
+    });
 
-  logger.info('Research extraction completed', {
-    paperId,
-    confidence: result.confidence,
-    modelId: result.modelId,
+    return { analysisId: analysis.id, confidence: result.confidence };
   });
-
-  return { analysisId: analysis.id, confidence: result.confidence };
 }
 
 export async function processAnalyzeJob(job: Job<AnalyzeJobData>): Promise<void> {
