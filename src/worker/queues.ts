@@ -26,6 +26,8 @@ export const QUEUE_NAMES = {
    * that misses its one delayed job would never publish.
    */
   SCHEDULE_SWEEP: 'schedule.sweep',
+  /** Periodic one-way mirror of PostgreSQL into the MongoDB mirror database. */
+  MONGO_SYNC: 'mongo.sync',
 } as const;
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
@@ -65,4 +67,5 @@ export const postPublishQueue = createQueue(QUEUE_NAMES.POST_PUBLISH);
 export const tokenWatchQueue = createQueue(QUEUE_NAMES.TOKEN_WATCH);
 export const sourcesPollQueue = createQueue(QUEUE_NAMES.SOURCES_POLL);
 export const scheduleSweepQueue = createQueue(QUEUE_NAMES.SCHEDULE_SWEEP);
+export const mongoSyncQueue = createQueue(QUEUE_NAMES.MONGO_SYNC);
 

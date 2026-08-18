@@ -17,7 +17,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "spike:linkedin": "tsx scripts/spike-linkedin.ts"
+    "spike:linkedin": "tsx scripts/spike-linkedin.ts",
+    "sync:mongo": "tsx scripts/sync-mongo.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -33,6 +34,7 @@
     "date-fns-tz": "^3.2.0",
     "fast-xml-parser": "^5.10.1",
     "ioredis": "^6.0.0",
+    "mongodb": "^7.5.0",
     "nanoid": "^5.1.16",
     "next": "^15.5.23",
     "next-auth": "^5.0.0-beta.32",

@@ -9,13 +9,21 @@ import { Worker } from 'bullmq';
 import { createRedisConnection, closeRedis } from '@/lib/redis';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
-import { QUEUE_NAMES, sourcesPollQueue, tokenWatchQueue, scheduleSweepQueue } from './queues';
+import {
+  QUEUE_NAMES,
+  sourcesPollQueue,
+  tokenWatchQueue,
+  scheduleSweepQueue,
+  mongoSyncQueue,
+} from './queues';
+import { mongoConfigured } from '@/lib/mongo';
 import { processAnalyzeJob } from './processors/analyze.processor';
 import { processDraftJob } from './processors/draft.processor';
 import { processPublishJob } from './processors/publish.processor';
 import { processPollJob } from './processors/poll.processor';
 import { processTokenWatchJob } from './processors/token-watch.processor';
 import { processScheduleSweepJob } from './processors/schedule-sweep.processor';
+import { processMongoSyncJob } from './processors/mongo-sync.processor';
 
 // ─────────────────────  Worker Setup  ────────────────────────────────
 
@@ -44,6 +52,11 @@ const workers: Worker[] = [
   // and its own claims already guard against a second one overlapping.
   new Worker(QUEUE_NAMES.SCHEDULE_SWEEP, processScheduleSweepJob, {
     connection: createRedisConnection({ label: 'worker-schedule-sweep' }),
+    concurrency: 1,
+  }),
+  // One-way Postgres → Mongo mirror. Serial; a no-op when MONGODB_URI is unset.
+  new Worker(QUEUE_NAMES.MONGO_SYNC, processMongoSyncJob, {
+    connection: createRedisConnection({ label: 'worker-mongo-sync' }),
     concurrency: 1,
   }),
 ];
@@ -78,7 +91,15 @@ async function scheduleCronJobs(): Promise<void> {
     every: 60 * 1000,
   });
 
-  logger.info('Registered repeatable cron jobs (sources poll, token watch & schedule sweep)');
+  // Mongo mirror: every 5 minutes, only when a mirror target is configured.
+  if (mongoConfigured()) {
+    await mongoSyncQueue.upsertJobScheduler('mongo-mirror-sync', {
+      every: 5 * 60 * 1000,
+    });
+    logger.info('Registered repeatable cron jobs (sources poll, token watch, schedule sweep & mongo mirror)');
+  } else {
+    logger.info('Registered repeatable cron jobs (sources poll, token watch & schedule sweep)');
+  }
 }
 
 // ─────────────────────  Lifecycle  ───────────────────────────────────
