@@ -19,17 +19,10 @@ import {
   fitFontSize,
   fitFontSizeForItems,
 } from '../layout';
+import { DEFAULT_THEME, withAlpha } from '../palette';
 
 type KeyFindingsSpec = Extract<VisualSpec, { template: 'KEY_FINDINGS' }>;
 
-const DEFAULTS = {
-  background: '#0A0F1E',
-  primary: '#6366F1',
-  text: '#F1F5F9',
-  accent: '#22D3EE',
-};
-
-const BULLET_COLOURS = ['#6366F1', '#22D3EE', '#A78BFA', '#34D399', '#F472B6'];
 
 const HEADLINE_LADDER = [44, 40, 36, 32, 28] as const;
 const FINDING_LADDER = [30, 27, 24, 22, 20, 18] as const;
@@ -42,7 +35,7 @@ const HEADLINE_GAP = 48;
 const BULLET_GUTTER = 32;
 
 export function KeyFindings(spec: KeyFindingsSpec) {
-  const theme = { ...DEFAULTS, ...spec.theme };
+  const theme = { ...DEFAULT_THEME, ...spec.theme };
 
   const available = CARD.HEIGHT - CARD.PADDING * 2 - FOOTER_RESERVE;
   const textWidth = CONTENT_WIDTH - BULLET_GUTTER;
@@ -83,7 +76,7 @@ export function KeyFindings(spec: KeyFindingsSpec) {
         flexDirection: 'column',
         width: '100%',
         height: '100%',
-        background: `linear-gradient(150deg, ${theme.background} 0%, #111827 100%)`,
+        background: `linear-gradient(150deg, ${theme.background} 0%, ${theme.surface} 100%)`,
         padding: `${CARD.PADDING}px`,
         fontFamily: 'Inter',
         position: 'relative',
@@ -140,7 +133,7 @@ export function KeyFindings(spec: KeyFindingsSpec) {
               width: `${bulletSize}px`,
               height: `${bulletSize}px`,
               borderRadius: '50%',
-              background: BULLET_COLOURS[i % BULLET_COLOURS.length],
+              background: theme.series[i % theme.series.length],
               marginTop: `${Math.round(findingSize * 0.45)}px`,
               flexShrink: 0,
             },
@@ -168,7 +161,7 @@ export function KeyFindings(spec: KeyFindingsSpec) {
           fontSize: '22px',
           color: theme.text,
           opacity: 0.4,
-          borderTop: `1px solid rgba(255,255,255,0.1)`,
+          borderTop: `1px solid ${withAlpha(theme.text, 0.12)}`,
           paddingTop: '20px',
         },
       },

@@ -6,15 +6,10 @@
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
 import { CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize, fitSingleLine } from '../layout';
+import { DEFAULT_THEME, withAlpha } from '../palette';
 
 type ComparisonSpec = Extract<VisualSpec, { template: 'COMPARISON' }>;
 
-const DEFAULTS = {
-  background: '#0A0F1E',
-  primary: '#6366F1',
-  text: '#F1F5F9',
-  accent: '#22D3EE',
-};
 
 const HEADLINE_LADDER = [44, 40, 36, 32, 28] as const;
 const VALUE_LADDER = [100, 84, 70, 58, 48, 40, 34] as const;
@@ -32,7 +27,7 @@ const BOX_WIDTH = (CONTENT_WIDTH - DIVIDER_WIDTH) / 2;
 const BOX_TEXT_WIDTH = BOX_WIDTH - BOX_PADDING * 2;
 
 export function Comparison(spec: ComparisonSpec) {
-  const theme = { ...DEFAULTS, ...spec.theme };
+  const theme = { ...DEFAULT_THEME, ...spec.theme };
 
   const headlineSize = fitFontSize(
     spec.headline,
@@ -58,7 +53,7 @@ export function Comparison(spec: ComparisonSpec) {
         flexDirection: 'column',
         width: '100%',
         height: '100%',
-        background: `linear-gradient(135deg, ${theme.background} 0%, #111827 100%)`,
+        background: `linear-gradient(135deg, ${theme.background} 0%, ${theme.surface} 100%)`,
         padding: '80px',
         fontFamily: 'Inter',
         position: 'relative',
@@ -112,7 +107,7 @@ export function Comparison(spec: ComparisonSpec) {
             flexDirection: 'column',
             alignItems: 'center',
             padding: `${BOX_PADDING}px`,
-            background: `rgba(99, 102, 241, 0.1)`,
+            background: withAlpha(theme.primary, 0.12),
             borderRadius: '24px',
           },
         },
@@ -171,7 +166,7 @@ export function Comparison(spec: ComparisonSpec) {
             flexDirection: 'column',
             alignItems: 'center',
             padding: `${BOX_PADDING}px`,
-            background: `rgba(34, 211, 238, 0.1)`,
+            background: withAlpha(theme.accent, 0.12),
             borderRadius: '24px',
           },
         },
@@ -226,7 +221,7 @@ export function Comparison(spec: ComparisonSpec) {
           color: theme.text,
           opacity: 0.35,
           marginTop: '32px',
-          borderTop: `1px solid rgba(255,255,255,0.1)`,
+          borderTop: `1px solid ${withAlpha(theme.text, 0.12)}`,
           paddingTop: '20px',
         },
       },

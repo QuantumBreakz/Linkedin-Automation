@@ -9,17 +9,10 @@
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
 import { CARD, CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize, fitFontSizeForItems } from '../layout';
+import { DEFAULT_THEME, withAlpha } from '../palette';
 
 type ConceptExplainerSpec = Extract<VisualSpec, { template: 'CONCEPT_EXPLAINER' }>;
 
-const DEFAULTS = {
-  background: '#0A0F1E',
-  primary: '#6366F1',
-  text: '#F1F5F9',
-  accent: '#22D3EE',
-};
-
-const TERM_COLOURS = ['#22D3EE', '#A78BFA', '#34D399', '#F472B6'];
 
 const HEADLINE_LADDER = [42, 38, 34, 30, 27] as const;
 const PLAIN_LADDER = [28, 25, 23, 21, 19] as const;
@@ -29,7 +22,7 @@ const HEADLINE_GAP = 44;
 const ROW_PADDING = 28;
 
 export function ConceptExplainer(spec: ConceptExplainerSpec) {
-  const theme = { ...DEFAULTS, ...spec.theme };
+  const theme = { ...DEFAULT_THEME, ...spec.theme };
 
   const available = CARD.HEIGHT - CARD.PADDING * 2 - FOOTER_RESERVE;
   const textWidth = CONTENT_WIDTH - ROW_PADDING * 2;
@@ -63,7 +56,7 @@ export function ConceptExplainer(spec: ConceptExplainerSpec) {
         flexDirection: 'column',
         width: '100%',
         height: '100%',
-        background: `linear-gradient(150deg, ${theme.background} 0%, #111827 100%)`,
+        background: `linear-gradient(150deg, ${theme.background} 0%, ${theme.surface} 100%)`,
         padding: `${CARD.PADDING}px`,
         fontFamily: 'Inter',
         position: 'relative',
@@ -105,9 +98,9 @@ export function ConceptExplainer(spec: ConceptExplainerSpec) {
               flexDirection: 'column',
               padding: `${ROW_PADDING}px`,
               marginBottom: i === spec.terms.length - 1 ? '0px' : '20px',
-              background: 'rgba(255,255,255,0.04)',
+              background: withAlpha(theme.text, 0.05),
               borderRadius: '20px',
-              borderLeft: `4px solid ${TERM_COLOURS[i % TERM_COLOURS.length]}`,
+              borderLeft: `4px solid ${theme.series[i % theme.series.length]}`,
             },
           },
           React.createElement(
@@ -116,7 +109,7 @@ export function ConceptExplainer(spec: ConceptExplainerSpec) {
               style: {
                 fontSize: '26px',
                 fontWeight: 700,
-                color: TERM_COLOURS[i % TERM_COLOURS.length],
+                color: theme.series[i % theme.series.length],
                 marginBottom: '10px',
               },
             },
@@ -137,7 +130,7 @@ export function ConceptExplainer(spec: ConceptExplainerSpec) {
           fontSize: '22px',
           color: theme.text,
           opacity: 0.4,
-          borderTop: `1px solid rgba(255,255,255,0.1)`,
+          borderTop: `1px solid ${withAlpha(theme.text, 0.12)}`,
           paddingTop: '20px',
         },
       },

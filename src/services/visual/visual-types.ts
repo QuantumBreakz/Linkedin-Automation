@@ -14,11 +14,24 @@ import { z } from 'zod';
 
 const ColourSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 
+/**
+ * The card's colour scheme. Populated per paper from services/visual/palette,
+ * and carried on the spec rather than chosen at render time so it is part of
+ * the render cache key — see the note in palette.ts.
+ */
 const ThemeSchema = z.object({
   background: ColourSchema.default('#0A0F1E'),
+  /** Gradient end. */
+  surface: ColourSchema.default('#111827'),
   primary: ColourSchema.default('#6366F1'),
   text: ColourSchema.default('#F1F5F9'),
   accent: ColourSchema.default('#22D3EE'),
+  /** Cycled for bullets and other repeated accents. */
+  series: z
+    .array(ColourSchema)
+    .min(1)
+    .max(6)
+    .default(['#6366F1', '#22D3EE', '#A78BFA', '#34D399', '#F472B6']),
 });
 
 export type Theme = z.infer<typeof ThemeSchema>;

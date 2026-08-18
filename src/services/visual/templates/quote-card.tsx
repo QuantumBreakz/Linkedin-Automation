@@ -5,22 +5,17 @@
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
 import { CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize } from '../layout';
+import { DEFAULT_THEME, withAlpha } from '../palette';
 
 type QuoteCardSpec = Extract<VisualSpec, { template: 'QUOTE_CARD' }>;
 
-const DEFAULTS = {
-  background: '#0A0F1E',
-  primary: '#6366F1',
-  text: '#F1F5F9',
-  accent: '#22D3EE',
-};
 
 const QUOTE_LADDER = [44, 40, 36, 33, 30, 27] as const;
 /** Height left for the quote once the mark, rule, attribution and source are placed. */
 const QUOTE_BUDGET = 560;
 
 export function QuoteCard(spec: QuoteCardSpec) {
-  const theme = { ...DEFAULTS, ...spec.theme };
+  const theme = { ...DEFAULT_THEME, ...spec.theme };
 
   const quoteSize = fitFontSize(
     spec.quote,
@@ -40,7 +35,7 @@ export function QuoteCard(spec: QuoteCardSpec) {
         justifyContent: 'center',
         width: '100%',
         height: '100%',
-        background: `linear-gradient(135deg, ${theme.background} 0%, #1e1b4b 100%)`,
+        background: `linear-gradient(135deg, ${theme.background} 0%, ${theme.surface} 100%)`,
         padding: '100px 80px',
         fontFamily: 'Inter',
         position: 'relative',
@@ -129,7 +124,7 @@ export function QuoteCard(spec: QuoteCardSpec) {
           bottom: '50px',
           left: '80px',
           right: '80px',
-          borderTop: `1px solid rgba(255,255,255,0.1)`,
+          borderTop: `1px solid ${withAlpha(theme.text, 0.12)}`,
           paddingTop: '20px',
         },
       },

@@ -8,15 +8,10 @@
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
 import { CARD, CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize } from '../layout';
+import { DEFAULT_THEME, withAlpha } from '../palette';
 
 type ProblemSolutionSpec = Extract<VisualSpec, { template: 'PROBLEM_SOLUTION' }>;
 
-const DEFAULTS = {
-  background: '#0A0F1E',
-  primary: '#6366F1',
-  text: '#F1F5F9',
-  accent: '#22D3EE',
-};
 
 const HEADLINE_LADDER = [42, 38, 34, 30, 27] as const;
 const BODY_LADDER = [30, 27, 24, 22, 20] as const;
@@ -66,7 +61,11 @@ function panel(
 }
 
 export function ProblemSolution(spec: ProblemSolutionSpec) {
-  const theme = { ...DEFAULTS, ...spec.theme };
+  const theme = { ...DEFAULT_THEME, ...spec.theme };
+
+  // A hue from the palette that contrasts its accent, so the two panels read
+  // as opposed rather than as a pair.
+  const problemColour = theme.series[theme.series.length - 1] ?? theme.primary;
 
   const headlineSize = fitFontSize(
     spec.headline,
@@ -87,7 +86,7 @@ export function ProblemSolution(spec: ProblemSolutionSpec) {
         flexDirection: 'column',
         width: '100%',
         height: '100%',
-        background: `linear-gradient(150deg, ${theme.background} 0%, #111827 100%)`,
+        background: `linear-gradient(150deg, ${theme.background} 0%, ${theme.surface} 100%)`,
         padding: `${CARD.PADDING}px`,
         fontFamily: 'Inter',
         position: 'relative',
@@ -126,7 +125,14 @@ export function ProblemSolution(spec: ProblemSolutionSpec) {
         },
         spec.headline,
       ),
-      panel('THE PROBLEM', spec.problem, bodySize, '#F472B6', theme.text, 'rgba(244, 114, 182, 0.10)'),
+      panel(
+        'THE PROBLEM',
+        spec.problem,
+        bodySize,
+        problemColour,
+        theme.text,
+        withAlpha(problemColour, 0.12),
+      ),
       React.createElement(
         'div',
         {
@@ -141,7 +147,14 @@ export function ProblemSolution(spec: ProblemSolutionSpec) {
         },
         '↓',
       ),
-      panel('WHAT THIS WORK DOES', spec.solution, bodySize, theme.accent, theme.text, 'rgba(34, 211, 238, 0.10)'),
+      panel(
+        'WHAT THIS WORK DOES',
+        spec.solution,
+        bodySize,
+        theme.accent,
+        theme.text,
+        withAlpha(theme.accent, 0.12),
+      ),
     ),
     React.createElement(
       'div',
@@ -150,7 +163,7 @@ export function ProblemSolution(spec: ProblemSolutionSpec) {
           fontSize: '22px',
           color: theme.text,
           opacity: 0.4,
-          borderTop: `1px solid rgba(255,255,255,0.1)`,
+          borderTop: `1px solid ${withAlpha(theme.text, 0.12)}`,
           paddingTop: '20px',
         },
       },

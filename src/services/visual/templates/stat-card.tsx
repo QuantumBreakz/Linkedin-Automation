@@ -8,15 +8,10 @@
 import type { VisualSpec } from '../visual-types';
 import React from 'react';
 import { CONTENT_WIDTH, CHAR_WIDTH_RATIO, fitFontSize, fitSingleLine } from '../layout';
+import { DEFAULT_THEME, withAlpha } from '../palette';
 
 type StatCardSpec = Extract<VisualSpec, { template: 'STAT_CARD' }>;
 
-const DEFAULTS = {
-  background: '#0A0F1E',
-  primary: '#6366F1',
-  text: '#F1F5F9',
-  accent: '#22D3EE',
-};
 
 /** The hero figure shrinks rather than wrapping — see fitSingleLine. */
 const STAT_LADDER = [160, 132, 108, 88, 72, 58, 48] as const;
@@ -25,7 +20,7 @@ const LABEL_LADDER = [36, 32, 28, 25] as const;
 const CONTEXT_LADDER = [28, 26, 23, 21] as const;
 
 export function StatCard(spec: StatCardSpec) {
-  const theme = { ...DEFAULTS, ...spec.theme };
+  const theme = { ...DEFAULT_THEME, ...spec.theme };
 
   const statSize = fitSingleLine(spec.stat, CONTENT_WIDTH, STAT_LADDER);
   const headlineSize = fitFontSize(
@@ -47,7 +42,7 @@ export function StatCard(spec: StatCardSpec) {
         flexDirection: 'column',
         width: '100%',
         height: '100%',
-        background: `linear-gradient(135deg, ${theme.background} 0%, #1a1f3a 100%)`,
+        background: `linear-gradient(135deg, ${theme.background} 0%, ${theme.surface} 100%)`,
         padding: '80px',
         fontFamily: 'Inter',
         position: 'relative',
@@ -133,7 +128,7 @@ export function StatCard(spec: StatCardSpec) {
           fontSize: '22px',
           color: theme.text,
           opacity: 0.4,
-          borderTop: `1px solid rgba(255,255,255,0.1)`,
+          borderTop: `1px solid ${withAlpha(theme.text, 0.12)}`,
           paddingTop: '20px',
           marginTop: '20px',
         },

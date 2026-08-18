@@ -22,6 +22,7 @@
 
 import type { Claim, ResearchExtraction } from '@/services/content/types';
 import type { VisualSpec } from './visual-types';
+import { paletteFor } from './palette';
 
 /** The paper fields a card needs for its headline, attribution and source line. */
 export interface VisualPaperContext {
@@ -38,6 +39,16 @@ function clip(text: string, max: number): string {
 
 function sourceLine(paper: VisualPaperContext): string {
   return clip(paper.venue ?? paper.title, 100);
+}
+
+/**
+ * The card's colour scheme, seeded from the paper title so a feed of cards is
+ * varied while any one paper keeps a stable look across re-renders (which the
+ * render cache requires — see palette.ts).
+ */
+function themeFor(paper: VisualPaperContext) {
+  const { name: _name, ...theme } = paletteFor(paper.title);
+  return { ...theme, series: [...theme.series] };
 }
 
 // ────────────────────────────  builders  ─────────────────────────────
@@ -57,6 +68,7 @@ function buildStatCard(
     statLabel: clip(top.metric, 80),
     context: clip(top.context, 200),
     source: sourceLine(paper),
+    theme: themeFor(paper),
   };
 }
 
@@ -75,6 +87,7 @@ function buildKeyFindings(
     headline: clip(paper.title, 120),
     findings,
     source: sourceLine(paper),
+    theme: themeFor(paper),
   };
 }
 
@@ -106,6 +119,7 @@ function buildQuoteCard(
     attribution: clip(lead?.name ?? 'From the paper', 100),
     context: clip(paper.title, 150),
     source: sourceLine(paper),
+    theme: themeFor(paper),
   };
 }
 
@@ -130,6 +144,7 @@ function buildComparison(
     rightValue: clip(right.value, 40),
     context: clip(left.context, 200),
     source: sourceLine(paper),
+    theme: themeFor(paper),
   };
 }
 
@@ -148,6 +163,7 @@ function buildProblemSolution(
     problem: clip(problem, 240),
     solution: clip(solution, 240),
     source: sourceLine(paper),
+    theme: themeFor(paper),
   };
 }
 
@@ -165,6 +181,7 @@ function buildConceptExplainer(
     headline: clip(paper.title, 120),
     terms,
     source: sourceLine(paper),
+    theme: themeFor(paper),
   };
 }
 
