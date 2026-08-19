@@ -97,7 +97,8 @@ export function StatCard(spec: StatCardSpec) {
         style: {
           fontSize: `${labelSize}px`,
           fontWeight: 600,
-          color: theme.primary,
+          color: theme.accent,
+          opacity: 0.8,
           marginTop: '16px',
           lineHeight: 1.25,
         },

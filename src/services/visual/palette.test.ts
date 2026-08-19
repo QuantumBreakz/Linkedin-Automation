@@ -11,11 +11,15 @@ describe('visual/palette', () => {
       for (const colour of [palette.background, palette.surface, palette.primary, palette.accent, palette.text]) {
         expect(colour).toMatch(HEX);
       }
-      expect(palette.series.length).toBeGreaterThan(0);
-      expect(palette.series.length).toBeLessThanOrEqual(6);
-      for (const colour of palette.series) expect(colour).toMatch(HEX);
     }
     expect(new Set(PALETTES.map((p) => p.name)).size).toBe(PALETTES.length);
+  });
+
+  it('gives each palette a distinct accent, since accent is the card colour', () => {
+    // One hue carries a whole card, so two palettes sharing an accent would
+    // make two papers look identical.
+    const accents = PALETTES.map((p) => p.accent);
+    expect(new Set(accents).size).toBe(accents.length);
   });
 
   it('is deterministic — the same seed always yields the same palette', () => {
@@ -67,7 +71,7 @@ describe('visual/select — theming', () => {
     const spec = selectVisualSpec(extraction, paper('Sparse attention'));
     expect(spec?.theme).toBeDefined();
     expect(spec?.theme?.background).toMatch(HEX);
-    expect(spec?.theme?.series?.length).toBeGreaterThan(0);
+    expect(spec?.theme?.accent).toMatch(HEX);
   });
 
   it('gives one paper a stable theme and different papers different ones', () => {

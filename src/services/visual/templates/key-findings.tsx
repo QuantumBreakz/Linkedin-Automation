@@ -133,7 +133,7 @@ export function KeyFindings(spec: KeyFindingsSpec) {
               width: `${bulletSize}px`,
               height: `${bulletSize}px`,
               borderRadius: '50%',
-              background: theme.series[i % theme.series.length],
+              background: theme.accent,
               marginTop: `${Math.round(findingSize * 0.45)}px`,
               flexShrink: 0,
             },

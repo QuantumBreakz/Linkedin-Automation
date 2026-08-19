@@ -63,9 +63,9 @@ function panel(
 export function ProblemSolution(spec: ProblemSolutionSpec) {
   const theme = { ...DEFAULT_THEME, ...spec.theme };
 
-  // A hue from the palette that contrasts its accent, so the two panels read
-  // as opposed rather than as a pair.
-  const problemColour = theme.series[theme.series.length - 1] ?? theme.primary;
+  // The problem panel stays neutral and the solution carries the card's accent:
+  // the two read as opposed through emphasis, not through a second hue.
+  const problemColour = theme.text;
 
   const headlineSize = fitFontSize(
     spec.headline,
@@ -131,7 +131,7 @@ export function ProblemSolution(spec: ProblemSolutionSpec) {
         bodySize,
         problemColour,
         theme.text,
-        withAlpha(problemColour, 0.12),
+        withAlpha(problemColour, 0.06),
       ),
       React.createElement(
         'div',

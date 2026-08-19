@@ -58,7 +58,7 @@ export function QuoteCard(spec: QuoteCardSpec) {
         style: {
           fontSize: '160px',
           fontWeight: 700,
-          color: theme.primary,
+          color: theme.accent,
           opacity: 0.3,
           lineHeight: 0.8,
           marginBottom: '-20px',

@@ -48,7 +48,7 @@ function sourceLine(paper: VisualPaperContext): string {
  */
 function themeFor(paper: VisualPaperContext) {
   const { name: _name, ...theme } = paletteFor(paper.title);
-  return { ...theme, series: [...theme.series] };
+  return theme;
 }
 
 // ────────────────────────────  builders  ─────────────────────────────

@@ -100,7 +100,7 @@ export function ConceptExplainer(spec: ConceptExplainerSpec) {
               marginBottom: i === spec.terms.length - 1 ? '0px' : '20px',
               background: withAlpha(theme.text, 0.05),
               borderRadius: '20px',
-              borderLeft: `4px solid ${theme.series[i % theme.series.length]}`,
+              borderLeft: `4px solid ${theme.accent}`,
             },
           },
           React.createElement(
@@ -109,7 +109,7 @@ export function ConceptExplainer(spec: ConceptExplainerSpec) {
               style: {
                 fontSize: '26px',
                 fontWeight: 700,
-                color: theme.series[i % theme.series.length],
+                color: theme.accent,
                 marginBottom: '10px',
               },
             },

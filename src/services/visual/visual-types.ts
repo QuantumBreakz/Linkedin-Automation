@@ -23,15 +23,11 @@ const ThemeSchema = z.object({
   background: ColourSchema.default('#0A0F1E'),
   /** Gradient end. */
   surface: ColourSchema.default('#111827'),
+  /** Used only for the header rule's gradient. */
   primary: ColourSchema.default('#6366F1'),
   text: ColourSchema.default('#F1F5F9'),
+  /** The card's single content colour — every highlight on a card uses it. */
   accent: ColourSchema.default('#22D3EE'),
-  /** Cycled for bullets and other repeated accents. */
-  series: z
-    .array(ColourSchema)
-    .min(1)
-    .max(6)
-    .default(['#6366F1', '#22D3EE', '#A78BFA', '#34D399', '#F472B6']),
 });
 
 export type Theme = z.infer<typeof ThemeSchema>;
