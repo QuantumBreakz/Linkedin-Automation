@@ -115,3 +115,57 @@ export async function POST(
     });
   });
 }
+
+export async function DELETE(
+  req: NextRequest,
+  props: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  return withUser(async (userId) => {
+    const { id } = await props.params;
+
+    const draft = await db.contentDraft.findFirst({
+      where: { id, userId },
+      select: {
+        id: true,
+        status: true,
+        published: {
+          select: {
+            linkedinUrn: true,
+            account: { select: { accessTokenEnc: true } },
+          },
+        },
+      },
+    });
+    if (!draft) return notFound('Draft');
+
+    if (draft.status === 'PUBLISHING') {
+      return badRequest('Cannot delete a draft that is currently being published.');
+    }
+
+    const { deleteOnLinkedin } = (await req.json().catch(() => ({}))) as {
+      deleteOnLinkedin?: boolean;
+    };
+
+    let deletedFromLinkedin = false;
+    if (deleteOnLinkedin && draft.published?.linkedinUrn && draft.published.account?.accessTokenEnc) {
+      try {
+        const { deletePost, decryptAccessToken } = await import('@/services/linkedin/client');
+        const token = decryptAccessToken(draft.published.account.accessTokenEnc);
+        deletedFromLinkedin = await deletePost({
+          urn: draft.published.linkedinUrn,
+          accessToken: token,
+        });
+      } catch (err) {
+        // Log but don't block DB deletion
+        console.error('Failed to delete post from LinkedIn:', err);
+      }
+    }
+
+    await db.contentDraft.delete({
+      where: { id: draft.id },
+    });
+
+    return NextResponse.json({ success: true, deletedFromLinkedin });
+  });
+}
+

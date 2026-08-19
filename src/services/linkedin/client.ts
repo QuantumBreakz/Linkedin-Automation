@@ -35,11 +35,19 @@ export interface PostTextRequest {
   idempotencyKey: string;
 }
 
-export interface PostImageRequest extends PostTextRequest {
-  /** Rendered image as a Buffer (PNG/JPEG). */
+export interface ImageItem {
   imageBuffer: Buffer;
-  imageMimeType: 'image/png' | 'image/jpeg';
+  imageMimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
   altText: string;
+}
+
+export interface PostImageRequest extends PostTextRequest {
+  /** Single image or first image buffer. */
+  imageBuffer: Buffer;
+  imageMimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  altText: string;
+  /** Optional array of multiple images (up to 10). */
+  images?: ImageItem[];
 }
 
 export type PostRequest = PostTextRequest | PostImageRequest;
@@ -87,7 +95,7 @@ export async function postText(req: PostTextRequest): Promise<PostResult> {
 }
 
 /**
- * Uploads an image then posts with the image attached.
+ * Uploads 1 to 10 images then posts with the image(s) attached.
  */
 export async function postWithImage(req: PostImageRequest): Promise<PostResult> {
   if (env.LINKEDIN_DRY_RUN) {
@@ -100,21 +108,104 @@ export async function postWithImage(req: PostImageRequest): Promise<PostResult> 
     };
   }
 
-  let imageAsset: string;
-  try {
-    imageAsset = await _uploadImage(req);
-  } catch (err) {
-    logger.warn('LinkedIn image upload failed, falling back to text-only post', { err });
+  const imagesToUpload: ImageItem[] = req.images && req.images.length > 0
+    ? req.images.slice(0, 10)
+    : [{ imageBuffer: req.imageBuffer, imageMimeType: req.imageMimeType, altText: req.altText }];
+
+  const uploadedAssets: Array<{ asset: string; altText: string }> = [];
+
+  for (const item of imagesToUpload) {
+    try {
+      const asset = await _uploadImage({
+        ...req,
+        imageBuffer: item.imageBuffer,
+        imageMimeType: item.imageMimeType,
+        altText: item.altText,
+      });
+      uploadedAssets.push({ asset, altText: item.altText });
+    } catch (err) {
+      logger.warn('Single image upload failed in batch', { err });
+    }
+  }
+
+  if (uploadedAssets.length === 0) {
+    logger.warn('All LinkedIn image uploads failed, falling back to text-only post');
     return postText(req);
   }
 
   try {
-    return await _postViaRestWithImage(req, imageAsset);
+    return await _postViaRestWithImages(req, uploadedAssets);
   } catch (err) {
-    logger.warn('LinkedIn image post via /rest/posts failed', { err });
+    logger.warn('LinkedIn multi-image post via /rest/posts failed', { err });
   }
 
-  return _postViaUgcWithImage(req, imageAsset);
+  return _postViaUgcWithImages(req, uploadedAssets);
+}
+
+/**
+ * Deletes a published post from LinkedIn.
+ * Handles both ugcPosts and shares URNs cleanly.
+ */
+export async function deletePost({
+  urn,
+  accessToken,
+}: {
+  urn: string;
+  accessToken: string;
+}): Promise<boolean> {
+  if (env.LINKEDIN_DRY_RUN || urn.includes('dry-run')) {
+    logger.info('LinkedIn dry-run: skipping post deletion', { urn });
+    return true;
+  }
+
+  // 1. Extract raw numeric or ugc identifier if present
+  const shareIdMatch = /urn:li:share:(\d+)/.exec(urn);
+  const ugcMatch = /urn:li:ugcPost:(\d+)/.exec(urn);
+
+  // Try /v2/ugcPosts/ or /v2/shares/
+  if (ugcMatch) {
+    try {
+      const resp = await _v2Fetch('DELETE', `${V2_BASE}/ugcPosts/${encodeURIComponent(urn)}`, accessToken);
+      if (resp.ok || resp.status === 204) return true;
+    } catch (err) {
+      logger.warn('LinkedIn DELETE /v2/ugcPosts failed', { err, urn });
+    }
+  }
+
+  if (shareIdMatch) {
+    try {
+      const shareId = shareIdMatch[1];
+      const resp = await _v2Fetch('DELETE', `${V2_BASE}/shares/${shareId}`, accessToken);
+      if (resp.ok || resp.status === 204) return true;
+    } catch (err) {
+      logger.warn('LinkedIn DELETE /v2/shares by numeric ID failed, trying full URN', { err, urn });
+    }
+    try {
+      const resp = await _v2Fetch('DELETE', `${V2_BASE}/shares/${encodeURIComponent(urn)}`, accessToken);
+      if (resp.ok || resp.status === 204) return true;
+    } catch (err) {
+      logger.warn('LinkedIn DELETE /v2/shares by URN failed', { err, urn });
+    }
+  }
+
+  // Fallback to /rest/posts/{encodedUrn}
+  try {
+    const encoded = encodeURIComponent(urn);
+    const resp = await _restFetch('DELETE', `${REST_BASE}/posts/${encoded}`, accessToken);
+    if (resp.ok || resp.status === 204) return true;
+  } catch (err) {
+    logger.warn('LinkedIn DELETE /rest/posts failed', { err, urn });
+  }
+
+  // Try /v2/ugcPosts/{encodedUrn} as final fallback
+  try {
+    const resp = await _v2Fetch('DELETE', `${V2_BASE}/ugcPosts/${encodeURIComponent(urn)}`, accessToken);
+    if (resp.ok || resp.status === 204) return true;
+  } catch (err) {
+    logger.warn('LinkedIn DELETE fallback failed', { err, urn });
+  }
+
+  return false;
 }
 
 // ─────────────────────  REST API (/rest/posts)  ───────────────────
@@ -160,7 +251,10 @@ async function _postViaRest(req: PostTextRequest): Promise<PostResult> {
   return { urn: finalUrn, permalink: _permalink(finalUrn), surface: 'rest/posts', rawResponse: parsed };
 }
 
-async function _postViaRestWithImage(req: PostImageRequest, imageAsset: string): Promise<PostResult> {
+async function _postViaRestWithImages(
+  req: PostImageRequest,
+  assets: Array<{ asset: string; altText: string }>,
+): Promise<PostResult> {
   const body: Record<string, unknown> = {
     author: req.authorUrn,
     lifecycleState: 'PUBLISHED',
@@ -168,13 +262,11 @@ async function _postViaRestWithImage(req: PostImageRequest, imageAsset: string):
       'com.linkedin.ugc.ShareContent': {
         shareCommentary: { text: req.text },
         shareMediaCategory: 'IMAGE',
-        media: [
-          {
-            status: 'READY',
-            media: imageAsset,
-            description: { text: req.altText },
-          },
-        ],
+        media: assets.map((a) => ({
+          status: 'READY',
+          media: a.asset,
+          description: { text: a.altText },
+        })),
       },
     },
     visibility: {
@@ -217,7 +309,10 @@ async function _postViaUgc(req: PostTextRequest): Promise<PostResult> {
   return { urn, permalink: _permalink(urn), surface: 'v2/ugcPosts', rawResponse: parsed };
 }
 
-async function _postViaUgcWithImage(req: PostImageRequest, imageAsset: string): Promise<PostResult> {
+async function _postViaUgcWithImages(
+  req: PostImageRequest,
+  assets: Array<{ asset: string; altText: string }>,
+): Promise<PostResult> {
   const body: Record<string, unknown> = {
     author: req.authorUrn,
     lifecycleState: 'PUBLISHED',
@@ -225,7 +320,11 @@ async function _postViaUgcWithImage(req: PostImageRequest, imageAsset: string): 
       'com.linkedin.ugc.ShareContent': {
         shareCommentary: { text: req.text },
         shareMediaCategory: 'IMAGE',
-        media: [{ status: 'READY', media: imageAsset }],
+        media: assets.map((a) => ({
+          status: 'READY',
+          media: a.asset,
+          description: { text: a.altText },
+        })),
       },
     },
     visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },
@@ -242,12 +341,11 @@ async function _postViaUgcWithImage(req: PostImageRequest, imageAsset: string): 
 
 /**
  * LinkedIn image upload recipe (member posts):
- *  1. Register upload → get uploadUrl + asset URN
+ *  1. Register upload via /rest/images or /v2/assets → get uploadUrl + asset URN
  *  2. Binary PUT to uploadUrl
- *  3. Asset URN goes into the post body
+ *  3. Asset URN / image URN goes into the post body
  */
 async function _uploadImage(req: PostImageRequest): Promise<string> {
-  // Step 1: register
   const registerBody = {
     registerUploadRequest: {
       owner: req.authorUrn,
@@ -261,13 +359,31 @@ async function _uploadImage(req: PostImageRequest): Promise<string> {
     },
   };
 
-  const regResp = await _restFetch(
-    'POST',
-    `${REST_BASE}/assets?action=registerUpload`,
-    req.accessToken,
-    registerBody,
-    undefined,
-  );
+  let regResp: Response | null = null;
+  
+  // Try v2/assets first (standard for w_member_social token permissions)
+  try {
+    regResp = await _v2Fetch(
+      'POST',
+      `${V2_BASE}/assets?action=registerUpload`,
+      req.accessToken,
+      registerBody,
+      undefined,
+    );
+  } catch (err) {
+    logger.warn('v2/assets registerUpload failed, trying rest/assets', { err });
+  }
+
+  // Fallback to rest/assets
+  if (!regResp || !regResp.ok) {
+    regResp = await _restFetch(
+      'POST',
+      `${REST_BASE}/assets?action=registerUpload`,
+      req.accessToken,
+      registerBody,
+      undefined,
+    );
+  }
 
   const regData = (await regResp.json()) as {
     value?: {
@@ -322,25 +438,31 @@ async function _restFetch(
   method: string,
   url: string,
   accessToken: string,
-  body: unknown,
+  body?: unknown,
   idempotencyKey?: string,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
-    'Content-Type': 'application/json',
     'LinkedIn-Version': env.LINKEDIN_API_VERSION,
     'X-Restli-Protocol-Version': '2.0.0',
   };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (idempotencyKey) headers['X-RestLi-Id'] = idempotencyKey;
 
   let resp: Response;
   try {
-    resp = await fetch(url, { method, headers, body: JSON.stringify(body) });
+    resp = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
   } catch (cause) {
     throw new UpstreamError('LinkedIn', `${method} ${url} network failure`, { cause, retryable: true });
   }
 
-  if (!resp.ok && resp.status !== 201) {
+  if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
     const text = await resp.text().catch(() => '');
     throw new UpstreamError('LinkedIn', `${method} ${url} returned HTTP ${resp.status}`, {
       status: resp.status,
@@ -356,24 +478,30 @@ async function _v2Fetch(
   method: string,
   url: string,
   accessToken: string,
-  body: unknown,
+  body?: unknown,
   idempotencyKey?: string,
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
-    'Content-Type': 'application/json',
     'X-Restli-Protocol-Version': '2.0.0',
   };
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
   if (idempotencyKey) headers['X-RestLi-Id'] = idempotencyKey;
 
   let resp: Response;
   try {
-    resp = await fetch(url, { method, headers, body: JSON.stringify(body) });
+    resp = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
   } catch (cause) {
     throw new UpstreamError('LinkedIn', `${method} ${url} network failure`, { cause, retryable: true });
   }
 
-  if (!resp.ok && resp.status !== 201) {
+  if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
     const text = await resp.text().catch(() => '');
     throw new UpstreamError('LinkedIn', `${method} ${url} returned HTTP ${resp.status}`, {
       status: resp.status,

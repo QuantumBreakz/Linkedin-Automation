@@ -30,6 +30,7 @@ export function PostPreview({
   authorAvatar,
   imageUrl,
   imageAlt,
+  images,
   linkUrl,
 }: {
   body: string;
@@ -39,10 +40,17 @@ export function PostPreview({
   authorAvatar?: string | null;
   imageUrl?: string | null;
   imageAlt?: string | null;
+  images?: Array<{ id: string; url: string; altText: string }>;
   linkUrl?: string | null;
 }) {
   const text = composePostText(body, hashtags);
   const folded = text.length > FOLD;
+
+  const displayImages = images && images.length > 0
+    ? images
+    : imageUrl
+      ? [{ id: 'single', url: imageUrl, altText: imageAlt ?? '' }]
+      : [];
 
   return (
     <div className="overflow-hidden rounded-3xl border border-ink-900/10 bg-white">
@@ -70,12 +78,62 @@ export function PostPreview({
         </p>
       )}
 
-      {imageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element -- a presigned object-storage URL; next/image would need a host allowlist that changes per deployment
-        <img src={imageUrl} alt={imageAlt ?? ''} className="w-full border-y border-ink-900/8" />
+      {displayImages.length === 1 && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={displayImages[0].url}
+          alt={displayImages[0].altText || ''}
+          className="w-full border-y border-ink-900/8 max-h-[30rem] object-cover"
+        />
       )}
 
-      {linkUrl && !imageUrl && (
+      {displayImages.length === 2 && (
+        <div className="grid grid-cols-2 gap-1 border-y border-ink-900/8 bg-ink-900/5">
+          {displayImages.map((img) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={img.id}
+              src={img.url}
+              alt={img.altText || ''}
+              className="h-60 w-full object-cover"
+            />
+          ))}
+        </div>
+      )}
+
+      {displayImages.length >= 3 && (
+        <div className="grid grid-cols-2 gap-1 border-y border-ink-900/8 bg-ink-900/5">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={displayImages[0].url}
+            alt={displayImages[0].altText || ''}
+            className="row-span-2 h-full w-full object-cover max-h-80"
+          />
+          <div className="grid gap-1">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={displayImages[1].url}
+              alt={displayImages[1].altText || ''}
+              className="h-36 w-full object-cover"
+            />
+            <div className="relative h-36 w-full">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={displayImages[2].url}
+                alt={displayImages[2].altText || ''}
+                className="h-full w-full object-cover"
+              />
+              {displayImages.length > 3 && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-lg font-bold text-white">
+                  +{displayImages.length - 3}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {linkUrl && displayImages.length === 0 && (
         <div className="mx-5 mb-4 rounded-2xl border border-ink-900/10 bg-cream-100 px-4 py-3">
           <p className="truncate text-xs font-medium text-ink-700">{linkUrl}</p>
           <p className="text-[0.65rem] text-ink-500">Link preview, as rendered by LinkedIn</p>
