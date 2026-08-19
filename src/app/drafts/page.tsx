@@ -2,6 +2,7 @@ import Link from 'next/link';
 import type { DraftStatus } from '@prisma/client';
 import { db } from '@/lib/db';
 import { requireSessionUser } from '@/lib/session';
+import { DeleteDraftButton } from '@/components/DeleteDraftButton';
 import {
   PageShell,
   PageHeader,
@@ -107,9 +108,12 @@ export default async function DraftsPage({
                       ? `Scheduled ${formatDateTime(draft.scheduledFor)}`
                       : `Fact-check: ${humanise(draft.verificationStatus)}`}
                 </span>
-                <Link href={`/drafts/${draft.id}`} className="btn btn-quiet btn-sm">
-                  {draft.status === 'PUBLISHED' ? 'View' : 'Review'} →
-                </Link>
+                <div className="flex items-center gap-2">
+                  <DeleteDraftButton draftId={draft.id} isPublished={draft.status === 'PUBLISHED'} />
+                  <Link href={`/drafts/${draft.id}`} className="btn btn-quiet btn-sm">
+                    {draft.status === 'PUBLISHED' ? 'View' : 'Review'} →
+                  </Link>
+                </div>
               </div>
             </Card>
           ))}

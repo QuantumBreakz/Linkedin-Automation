@@ -33,6 +33,7 @@ export interface ObjectStorage {
     contentType: string,
     options?: PutObjectOptions,
   ): Promise<{ key: string }>;
+  getObject(key: string): Promise<Buffer>;
   getSignedUrl(key: string, ttlSeconds: number): Promise<string>;
   objectExists(key: string): Promise<boolean>;
   readonly bucket: string;
@@ -61,9 +62,34 @@ export interface CreateStorageArgs {
   bucket?: string;
 }
 
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
 export function createStorage(args: CreateStorageArgs = {}): ObjectStorage {
   const bucket = args.bucket ?? env.S3_BUCKET;
   const client = args.client ?? buildClient();
+  const localDir = join(process.cwd(), '.storage');
+
+  async function putLocal(key: string, body: Buffer | Uint8Array | string) {
+    const filePath = join(localDir, key);
+    await mkdir(dirname(filePath), { recursive: true });
+    const buffer = typeof body === 'string' ? Buffer.from(body, 'utf-8') : Buffer.from(body);
+    await writeFile(filePath, buffer);
+  }
+
+  async function getLocal(key: string): Promise<Buffer> {
+    const filePath = join(localDir, key);
+    return await readFile(filePath);
+  }
+
+  async function localExists(key: string): Promise<boolean> {
+    try {
+      const s = await stat(join(localDir, key));
+      return s.isFile();
+    } catch {
+      return false;
+    }
+  }
 
   return {
     bucket,
@@ -83,7 +109,37 @@ export function createStorage(args: CreateStorageArgs = {}): ObjectStorage {
         );
         return { key };
       } catch (cause) {
+        // If S3/MinIO is unreachable (e.g. ECONNREFUSED in dev), save to local storage
+        if (
+          isConnectionRefused(cause) ||
+          env.NODE_ENV === 'development'
+        ) {
+          try {
+            await putLocal(key, body);
+            return { key };
+          } catch {
+            // fall through to upstream error
+          }
+        }
         throw new UpstreamError('s3', `failed to write '${key}'`, {
+          status: statusOf(cause),
+          cause,
+        });
+      }
+    },
+
+    async getObject(key) {
+      assertValidKey(key);
+      try {
+        const resp = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        const byteArray = await resp.Body?.transformToByteArray();
+        if (!byteArray) throw new Error('Empty response body');
+        return Buffer.from(byteArray);
+      } catch (cause) {
+        if (await localExists(key)) {
+          return await getLocal(key);
+        }
+        throw new UpstreamError('s3', `failed to get '${key}'`, {
           status: statusOf(cause),
           cause,
         });
@@ -100,11 +156,20 @@ export function createStorage(args: CreateStorageArgs = {}): ObjectStorage {
           `Signed URL TTL must not exceed ${MAX_SIGNED_URL_TTL_SECONDS} seconds (7 days).`,
         );
       }
+
+      // If stored locally (e.g. MinIO is down in dev), serve immediately via /api/storage/
+      if (await localExists(key)) {
+        return `/api/storage/${key}`;
+      }
+
       try {
         return await presign(client, new GetObjectCommand({ Bucket: bucket, Key: key }), {
           expiresIn: Math.floor(ttlSeconds),
         });
       } catch (cause) {
+        if (await localExists(key)) {
+          return `/api/storage/${key}`;
+        }
         throw new UpstreamError('s3', `failed to sign a URL for '${key}'`, {
           status: statusOf(cause),
           cause,
@@ -119,13 +184,28 @@ export function createStorage(args: CreateStorageArgs = {}): ObjectStorage {
         return true;
       } catch (cause) {
         const status = statusOf(cause);
-        if (status === 404 || isNotFound(cause)) return false;
-        // 403 on a HEAD usually means "exists but no permission" — surfacing it
-        // as `false` would send the render pipeline into an infinite re-upload.
+        if (status === 404 || isNotFound(cause)) {
+          return await localExists(key);
+        }
+        if (await localExists(key)) {
+          return true;
+        }
         throw new UpstreamError('s3', `failed to stat '${key}'`, { status, cause });
       }
     },
   };
+}
+
+function isConnectionRefused(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const code = (error as { code?: string }).code;
+  if (code === 'ECONNREFUSED' || code === 'ENOTFOUND') return true;
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause && typeof cause === 'object') {
+    const causeCode = (cause as { code?: string }).code;
+    if (causeCode === 'ECONNREFUSED' || causeCode === 'ENOTFOUND') return true;
+  }
+  return false;
 }
 
 function buildClient(): S3Client {

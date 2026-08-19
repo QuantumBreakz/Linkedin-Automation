@@ -47,11 +47,28 @@ export default async function DraftDetailPage(props: { params: Promise<{ id: str
     db.user.findUnique({ where: { id: user.id }, select: { name: true, title: true } }),
   ]);
 
+  const images = (
+    await Promise.all(
+      draft.visuals.map(async (v) => {
+        let url: string | null = null;
+        if (v.storageKey) {
+          url = await getStorage()
+            .getSignedUrl(v.storageKey, 600)
+            .catch(() => null);
+        }
+        return {
+          id: v.id,
+          url,
+          altText: v.altText,
+          isPrimary: v.isPrimary,
+        };
+      }),
+    )
+  ).filter((img): img is { id: string; url: string; altText: string; isPrimary: boolean } => img.url !== null);
+
   const primaryVisual = draft.visuals.find((v) => v.isPrimary) ?? draft.visuals[0];
-  let imageUrl: string | null = null;
-  if (primaryVisual?.storageKey) {
-    // A signed URL, so the preview shows the real rendered card without making
-    // the bucket public. Failure here is cosmetic — never block the review.
+  let imageUrl: string | null = images[0]?.url ?? null;
+  if (primaryVisual?.storageKey && !imageUrl) {
     imageUrl = await getStorage()
       .getSignedUrl(primaryVisual.storageKey, 600)
       .catch(() => null);
@@ -70,6 +87,7 @@ export default async function DraftDetailPage(props: { params: Promise<{ id: str
     paperTitle: draft.paper?.title ?? null,
     imageUrl,
     imageAlt: primaryVisual?.altText ?? null,
+    images,
     permalink: draft.published?.permalink ?? null,
   };
 

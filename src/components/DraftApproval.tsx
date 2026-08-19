@@ -13,11 +13,18 @@
  * window where a stale body could go out.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { PostPreview, composePostText } from '@/components/PostPreview';
 import { Badge, statusTone, humanise } from '@/components/ui';
+
+export interface ImageItemView {
+  id: string;
+  url: string;
+  altText: string;
+  isPrimary?: boolean;
+}
 
 export interface DraftView {
   id: string;
@@ -32,12 +39,14 @@ export interface DraftView {
   paperTitle: string | null;
   imageUrl: string | null;
   imageAlt: string | null;
+  images?: ImageItemView[];
   permalink: string | null;
 }
 
 type Notice = { tone: 'ok' | 'error'; text: string } | null;
 
 const MAX_LENGTH = 3000;
+const MAX_IMAGES = 10;
 
 export function DraftApproval({
   draft,
@@ -56,15 +65,24 @@ export function DraftApproval({
   dryRun: boolean;
 }) {
   const router = useRouter();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [body, setBody] = useState(draft.body);
   const [hashtagText, setHashtagText] = useState(draft.hashtags.join(' '));
+  const [images, setImages] = useState<ImageItemView[]>(
+    draft.images && draft.images.length > 0
+      ? draft.images
+      : draft.imageUrl
+        ? [{ id: 'primary', url: draft.imageUrl, altText: draft.imageAlt || 'Attached picture' }]
+        : [],
+  );
   const [editing, setEditing] = useState(false);
-  const [busy, setBusy] = useState<null | 'save' | 'approve' | 'publish' | 'schedule' | 'reject'>(null);
+  const [busy, setBusy] = useState<null | 'save' | 'approve' | 'publish' | 'schedule' | 'reject' | 'delete' | 'upload_image' | 'delete_image'>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [status, setStatus] = useState(draft.status);
   const [scheduleAt, setScheduleAt] = useState('');
   const [confirming, setConfirming] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const hashtags = hashtagText
     .split(/[\s,]+/)
@@ -73,8 +91,88 @@ export function DraftApproval({
 
   const composedLength = composePostText(body, hashtags).length;
   const tooLong = composedLength > MAX_LENGTH;
-  const published = status === 'PUBLISHED' || status === 'CANCELLED';
+  const isPublished = status === 'PUBLISHED';
+  const isCancelled = status === 'CANCELLED';
   const dirty = body !== draft.body || hashtags.join(' ') !== draft.hashtags.join(' ');
+
+  async function handleImageUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    if (images.length + files.length > MAX_IMAGES) {
+      setNotice({
+        tone: 'error',
+        text: `You can only attach up to ${MAX_IMAGES} pictures per post. Currently have ${images.length}.`,
+      });
+      return;
+    }
+
+    setBusy('upload_image');
+    setNotice(null);
+
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('file', files[i]);
+    }
+
+    try {
+      const res = await fetch(`/api/drafts/${draft.id}/image`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = (await res.json().catch(() => ({}))) as {
+        images?: ImageItemView[];
+        error?: string;
+      };
+
+      if (!res.ok) {
+        throw new Error(data.error ?? 'Upload failed');
+      }
+
+      if (data.images) {
+        setImages(data.images);
+        setNotice({
+          tone: 'ok',
+          text: `Added ${files.length} picture${files.length > 1 ? 's' : ''} to draft (${data.images.length}/${MAX_IMAGES}).`,
+        });
+        router.refresh();
+      }
+    } catch (err) {
+      setNotice({
+        tone: 'error',
+        text: err instanceof Error ? err.message : 'Could not upload image.',
+      });
+    } finally {
+      setBusy(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }
+
+  async function handleRemoveImage(visualId?: string) {
+    setBusy('delete_image');
+    setNotice(null);
+
+    try {
+      const res = await fetch(`/api/drafts/${draft.id}/image`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visualId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { images?: ImageItemView[] };
+      if (!res.ok) throw new Error();
+
+      setImages(data.images ?? []);
+      setNotice({ tone: 'ok', text: visualId ? 'Picture removed.' : 'All pictures removed.' });
+      router.refresh();
+    } catch {
+      setNotice({ tone: 'error', text: 'Could not remove image.' });
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function save() {
     setBusy('save');
@@ -156,6 +254,25 @@ export function DraftApproval({
     }
   }
 
+  const [deleteOnLinkedin, setDeleteOnLinkedin] = useState(false);
+
+  async function deleteDraft(alsoOnLinkedin = false) {
+    setBusy('delete');
+    try {
+      const res = await fetch(`/api/drafts/${draft.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deleteOnLinkedin: alsoOnLinkedin }),
+      });
+      if (!res.ok) throw new Error();
+      router.push('/drafts');
+    } catch {
+      setNotice({ tone: 'error', text: 'Could not delete this draft.' });
+      setBusy(null);
+      setConfirmingDelete(false);
+    }
+  }
+
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
       {/* ── preview / editor ── */}
@@ -173,7 +290,7 @@ export function DraftApproval({
                 type="button"
                 onClick={() => setEditing((value) => !value)}
                 className="btn btn-quiet btn-sm"
-                disabled={published}
+                disabled={isPublished || isCancelled}
               >
                 {editing ? 'Preview' : 'Edit'}
               </button>
@@ -200,6 +317,92 @@ export function DraftApproval({
                   placeholder="research openscience"
                 />
               </div>
+
+              {/* ── Picture / Image Attachment Section (Max 10) ── */}
+              <div className="rounded-2xl border border-ink-900/10 bg-cream-50/50 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-semibold text-ink-900">Post Pictures</p>
+                      <span className="rounded-full bg-ink-900/10 px-2 py-0.5 text-[0.65rem] font-medium text-ink-700">
+                        {images.length} / {MAX_IMAGES}
+                      </span>
+                    </div>
+                    <p className="text-[0.7rem] text-ink-500">
+                      Attach up to 10 images to this post (PNG, JPG, WEBP, or GIF up to 10MB each).
+                    </p>
+                  </div>
+                  <div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                      className="hidden"
+                      onChange={handleImageUpload}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={busy !== null || images.length >= MAX_IMAGES}
+                      className="btn btn-quiet btn-sm"
+                    >
+                      {busy === 'upload_image'
+                        ? 'Uploading…'
+                        : images.length === 0
+                          ? 'Upload pictures'
+                          : 'Add more pictures'}
+                    </button>
+                  </div>
+                </div>
+
+                {images.length > 0 && (
+                  <div className="mt-3.5 space-y-2">
+                    <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                      {images.map((img, idx) => (
+                        <div
+                          key={img.id || idx}
+                          className="group relative overflow-hidden rounded-xl border border-ink-900/10 bg-white p-1.5 shadow-xs"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={img.url}
+                            alt={img.altText || `Picture ${idx + 1}`}
+                            className="h-24 w-full rounded-lg object-cover"
+                          />
+                          <div className="mt-1 flex items-center justify-between px-1">
+                            <span className="truncate text-[0.65rem] font-medium text-ink-600">
+                              #{idx + 1} {img.altText || 'Image'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImage(img.id)}
+                              disabled={busy !== null}
+                              className="text-[0.65rem] font-semibold text-rust-500 hover:text-rust-600"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {images.length > 1 && (
+                      <div className="flex justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveImage()}
+                          disabled={busy !== null}
+                          className="text-[0.7rem] text-rust-500 hover:underline"
+                        >
+                          Remove all pictures
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-center gap-2.5">
                 <button
                   type="button"
@@ -229,8 +432,9 @@ export function DraftApproval({
               authorName={authorName}
               authorHeadline={authorHeadline}
               authorAvatar={authorAvatar}
-              imageUrl={draft.imageUrl}
-              imageAlt={draft.imageAlt}
+              imageUrl={images[0]?.url ?? null}
+              imageAlt={images[0]?.altText ?? null}
+              images={images}
               linkUrl={draft.linkUrl}
             />
           )}
@@ -255,11 +459,13 @@ export function DraftApproval({
             Approval
           </p>
           <p className="mt-2 text-sm leading-relaxed text-cream-100/70">
-            {published
+            {isPublished
               ? dryRun
                 ? 'Marked as published. Dry-run mode was on, so nothing was actually sent to LinkedIn.'
                 : 'This post is live on LinkedIn.'
-              : 'Nothing is sent to LinkedIn until you approve it here.'}
+              : isCancelled
+                ? 'This draft has been discarded and cancelled.'
+                : 'Nothing is sent to LinkedIn until you approve it here.'}
           </p>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -269,7 +475,7 @@ export function DraftApproval({
             </Badge>
           </div>
 
-          {!published && (
+          {!isPublished && !isCancelled && (
             <div className="mt-5 space-y-2.5">
               {dryRun && (
                 <p className="rounded-2xl bg-amber-soft px-3.5 py-2.5 text-[0.7rem] leading-relaxed text-amber-warn">
@@ -355,18 +561,113 @@ export function DraftApproval({
                 </button>
               </div>
 
+              <div className="flex items-center justify-between pt-1 text-[0.7rem]">
+                <button
+                  type="button"
+                  onClick={() => void reject()}
+                  disabled={busy !== null}
+                  className="font-medium text-cream-100/50 hover:text-rust-500"
+                >
+                  {busy === 'reject' ? 'Discarding…' : 'Discard draft'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={busy !== null}
+                  className="font-medium text-rust-500/80 hover:text-rust-500"
+                >
+                  Delete permanently
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Delete Action for Published Posts ── */}
+          {isPublished && !confirmingDelete && (
+            <div className="mt-5 pt-3 border-t border-cream-100/10">
               <button
                 type="button"
-                onClick={() => void reject()}
+                onClick={() => {
+                  setDeleteOnLinkedin(false);
+                  setConfirmingDelete(true);
+                }}
                 disabled={busy !== null}
-                className="w-full pt-1 text-[0.7rem] font-medium text-cream-100/50 hover:text-rust-500"
+                className="text-[0.75rem] text-rust-500/80 hover:text-rust-500 transition-colors"
               >
-                {busy === 'reject' ? 'Discarding…' : 'Discard this draft'}
+                Delete published post…
               </button>
             </div>
           )}
 
-          {published && draft.permalink && (
+          {isCancelled && !confirmingDelete && (
+            <div className="mt-5">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteOnLinkedin(false);
+                  setConfirmingDelete(true);
+                }}
+                disabled={busy !== null}
+                className="btn btn-sm w-full bg-rust-100/20 text-rust-500 hover:bg-rust-100/30"
+              >
+                Delete permanently
+              </button>
+            </div>
+          )}
+
+          {confirmingDelete && (
+            <div className="mt-5 space-y-3 rounded-2xl bg-rust-100/20 p-3.5 border border-rust-500/30">
+              <p className="text-[0.75rem] font-semibold text-rust-500">
+                {isPublished ? 'Delete published post?' : 'Permanently delete this draft?'}
+              </p>
+              <p className="text-[0.7rem] text-cream-100/80 leading-relaxed">
+                {isPublished
+                  ? 'This will remove the post from your local history and dashboard.'
+                  : 'This cannot be undone.'}
+              </p>
+
+              {isPublished && (
+                <label className="flex items-start gap-2.5 rounded-xl bg-ink-900/40 p-2.5 border border-rust-500/20 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deleteOnLinkedin}
+                    onChange={(e) => setDeleteOnLinkedin(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-cream-100/30 text-rust-500 focus:ring-rust-500"
+                  />
+                  <div className="text-[0.7rem] text-cream-100">
+                    <span className="font-semibold text-cream-50">Delete post on LinkedIn as well</span>
+                    <p className="text-[0.65rem] text-cream-100/70">
+                      If unchecked, the post will remain live on your LinkedIn profile.
+                    </p>
+                  </div>
+                </label>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => void deleteDraft(isPublished && deleteOnLinkedin)}
+                  disabled={busy !== null}
+                  className="btn btn-sm flex-1 bg-rust-500 text-cream-50 hover:bg-rust-500/90"
+                >
+                  {busy === 'delete' ? 'Deleting…' : 'Yes, delete'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmingDelete(false);
+                    setDeleteOnLinkedin(false);
+                  }}
+                  disabled={busy !== null}
+                  className="btn btn-sm flex-1 bg-cream-100/15 text-cream-100"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {isPublished && draft.permalink && !confirmingDelete && (
             <a
               href={draft.permalink}
               target="_blank"

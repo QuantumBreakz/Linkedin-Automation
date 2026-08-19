@@ -19,6 +19,7 @@
  *     explicit account-level setting) has said yes.
  */
 
+import { env } from '@/lib/env';
 import { db } from '@/lib/db';
 import { logger } from '@/lib/logger';
 import { recordStage } from '@/lib/stage';
@@ -151,24 +152,64 @@ export async function publishDraft(args: {
       : draft.body;
 
   try {
-    const primaryVisual = draft.visuals.find((v) => v.isPrimary) ?? draft.visuals[0];
     let result;
+    const validVisuals = draft.visuals.filter((v) => Boolean(v.storageKey));
 
-    if (primaryVisual?.storageKey) {
-      const imageSignedUrl = await getStorage().getSignedUrl(primaryVisual.storageKey, 300);
-      const imageResp = await fetch(imageSignedUrl);
-      const imageBuffer = Buffer.from(await imageResp.arrayBuffer());
+    if (validVisuals.length > 0) {
+      const imageItems: Array<{
+        imageBuffer: Buffer;
+        imageMimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+        altText: string;
+      }> = [];
 
-      result = await postWithImage({
-        authorUrn: account.personUrn,
-        accessToken,
-        text: fullText,
-        linkUrl: draft.linkUrl ?? undefined,
-        idempotencyKey,
-        imageBuffer,
-        imageMimeType: 'image/png',
-        altText: primaryVisual.altText || 'Research summary visual card',
-      });
+      for (const visual of validVisuals.slice(0, 10)) {
+        if (!visual.storageKey) continue;
+        let imageBuffer: Buffer;
+        try {
+          imageBuffer = await getStorage().getObject(visual.storageKey);
+        } catch {
+          const imageSignedUrl = await getStorage().getSignedUrl(visual.storageKey, 300);
+          const fetchUrl = imageSignedUrl.startsWith('/') ? `${env.APP_URL}${imageSignedUrl}` : imageSignedUrl;
+          const imageResp = await fetch(fetchUrl);
+          imageBuffer = Buffer.from(await imageResp.arrayBuffer());
+        }
+
+        const mimeType = visual.storageKey.endsWith('.jpg') || visual.storageKey.endsWith('.jpeg')
+          ? 'image/jpeg'
+          : visual.storageKey.endsWith('.webp')
+            ? 'image/webp'
+            : visual.storageKey.endsWith('.gif')
+              ? 'image/gif'
+              : 'image/png';
+
+        imageItems.push({
+          imageBuffer,
+          imageMimeType: mimeType,
+          altText: visual.altText || 'Post image',
+        });
+      }
+
+      if (imageItems.length > 0) {
+        result = await postWithImage({
+          authorUrn: account.personUrn,
+          accessToken,
+          text: fullText,
+          linkUrl: draft.linkUrl ?? undefined,
+          idempotencyKey,
+          imageBuffer: imageItems[0].imageBuffer,
+          imageMimeType: imageItems[0].imageMimeType,
+          altText: imageItems[0].altText,
+          images: imageItems,
+        });
+      } else {
+        result = await postText({
+          authorUrn: account.personUrn,
+          accessToken,
+          text: fullText,
+          linkUrl: draft.linkUrl ?? undefined,
+          idempotencyKey,
+        });
+      }
     } else {
       result = await postText({
         authorUrn: account.personUrn,
